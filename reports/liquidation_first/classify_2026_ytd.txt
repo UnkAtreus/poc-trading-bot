@@ -1,0 +1,24 @@
+[2m2026-05-08T16:35:02.216816Z[0m [[32m[1minfo     [0m] [1mboot.banner                   [0m [36mleverage[0m=[35m10[0m [36mmargin_per_order[0m=[35m66.0[0m [36mmode[0m=[35mtestnet[0m [36msymbols[0m=[35m8[0m
+[2m2026-05-08T16:35:02.746324Z[0m [[32m[1minfo     [0m] [1mclassify.loading              [0m [36msymbol[0m=[35mBTCUSDT[0m
+[2m2026-05-08T16:35:02.746689Z[0m [[32m[1minfo     [0m] [1mclassify.loading              [0m [36msymbol[0m=[35mETHUSDT[0m
+[2m2026-05-08T16:35:02.746882Z[0m [[32m[1minfo     [0m] [1mclassify.loading              [0m [36msymbol[0m=[35mSOLUSDT[0m
+[2m2026-05-08T16:35:02.746984Z[0m [[32m[1minfo     [0m] [1mclassify.loading              [0m [36msymbol[0m=[35mXRPUSDT[0m
+[2m2026-05-08T16:35:02.866197Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mSOLUSDT[0m
+[2m2026-05-08T16:35:02.866599Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mXRPUSDT[0m
+[2m2026-05-08T16:35:02.867647Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mBTCUSDT[0m
+[2m2026-05-08T16:35:02.867824Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mETHUSDT[0m
+[2m2026-05-08T16:35:03.448534Z[0m [[32m[1minfo     [0m] [1mclassify.loading              [0m [36msymbol[0m=[35mBNBUSDT[0m
+[2m2026-05-08T16:35:03.448650Z[0m [[32m[1minfo     [0m] [1mclassify.loading              [0m [36msymbol[0m=[35mLTCUSDT[0m
+[2m2026-05-08T16:35:04.141732Z[0m [[32m[1minfo     [0m] [1mclassify.loading              [0m [36msymbol[0m=[35mHYPEUSDT[0m
+[2m2026-05-08T16:35:04.141853Z[0m [[32m[1minfo     [0m] [1mclassify.loading              [0m [36msymbol[0m=[35mXAUTUSDT[0m
+[2m2026-05-08T16:35:04.145678Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mBNBUSDT[0m
+[2m2026-05-08T16:35:04.148838Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mLTCUSDT[0m
+[2m2026-05-08T16:35:04.306946Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mXAUTUSDT[0m
+[2m2026-05-08T16:35:04.330775Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mHYPEUSDT[0m
+regime        : crash
+reason        : basket drawdown or return breached crash threshold
+btc return    : -12.89%
+basket return : -11.32%
+max drawdown  : 54.81%
+ann. vol      : 52.49%
+volume ratio  : 0.86

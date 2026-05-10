@@ -1,0 +1,13 @@
+active:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - XRPUSDT
+  - BNBUSDT
+  - LTCUSDT
+  - HYPEUSDT
+  - XAUTUSDT
+
+overrides:
+  HYPEUSDT:
+    max_notional_per_symbol_usd: 300

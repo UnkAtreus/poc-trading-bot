@@ -1,0 +1,27 @@
+[2m2026-05-08T16:36:07.816718Z[0m [[32m[1minfo     [0m] [1mboot.banner                   [0m [36mleverage[0m=[35m10[0m [36mmargin_per_order[0m=[35m66.0[0m [36mmode[0m=[35mtestnet[0m [36msymbols[0m=[35m8[0m
+[2m2026-05-08T16:36:08.114300Z[0m [[32m[1minfo     [0m] [1mstress.loading                [0m [36msymbol[0m=[35mBTCUSDT[0m
+[2m2026-05-08T16:36:08.114518Z[0m [[32m[1minfo     [0m] [1mstress.loading                [0m [36msymbol[0m=[35mETHUSDT[0m
+[2m2026-05-08T16:36:08.114634Z[0m [[32m[1minfo     [0m] [1mstress.loading                [0m [36msymbol[0m=[35mSOLUSDT[0m
+[2m2026-05-08T16:36:08.114839Z[0m [[32m[1minfo     [0m] [1mstress.loading                [0m [36msymbol[0m=[35mXRPUSDT[0m
+[2m2026-05-08T16:36:08.174217Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mXRPUSDT[0m
+[2m2026-05-08T16:36:08.178653Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mSOLUSDT[0m
+[2m2026-05-08T16:36:08.178755Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mBTCUSDT[0m
+[2m2026-05-08T16:36:08.179861Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mETHUSDT[0m
+[2m2026-05-08T16:36:08.444527Z[0m [[32m[1minfo     [0m] [1mstress.loading                [0m [36msymbol[0m=[35mBNBUSDT[0m
+[2m2026-05-08T16:36:09.229815Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mBNBUSDT[0m
+[2m2026-05-08T16:36:09.497326Z[0m [[32m[1minfo     [0m] [1mstress.loading                [0m [36msymbol[0m=[35mLTCUSDT[0m
+[2m2026-05-08T16:36:09.497616Z[0m [[32m[1minfo     [0m] [1mstress.loading                [0m [36msymbol[0m=[35mHYPEUSDT[0m
+[2m2026-05-08T16:36:09.497954Z[0m [[32m[1minfo     [0m] [1mstress.loading                [0m [36msymbol[0m=[35mXAUTUSDT[0m
+[2m2026-05-08T16:36:09.720255Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mLTCUSDT[0m
+[2m2026-05-08T16:36:09.720432Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mXAUTUSDT[0m
+[2m2026-05-08T16:36:09.724522Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mHYPEUSDT[0m
+====================================================================================================================
+STRESS RESULTS
+====================================================================================================================
+scenario            trades         net    roi%       maxDD   liq   near  minLiq%     open$   worstUnrl
+--------------------------------------------------------------------------------------------------------------------
+historical              72      750.23    2.50     1965.38 False  False     0.00   8374.53     -758.85
+instant_-20pct          73      752.08    2.51     1965.38 False  False     0.00   3516.79     -758.85
+instant_-40pct          73      752.08    2.51     2812.09 False  False     0.00   2637.59    -1033.44
+instant_-60pct          73      752.08    2.51     3691.29 False  False     0.00   1758.39    -1348.96
+instant_-80pct          73      752.08    2.51     4570.49 False  False     0.00    879.20    -1664.48

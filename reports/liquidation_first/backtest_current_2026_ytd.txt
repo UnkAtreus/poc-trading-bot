@@ -1,0 +1,71 @@
+[2m2026-05-08T16:35:08.563439Z[0m [[32m[1minfo     [0m] [1mboot.banner                   [0m [36mleverage[0m=[35m10[0m [36mmargin_per_order[0m=[35m66.0[0m [36mmode[0m=[35mtestnet[0m [36msymbols[0m=[35m8[0m
+[2m2026-05-08T16:35:08.932253Z[0m [[32m[1minfo     [0m] [1mbacktest.loading              [0m [36msymbol[0m=[35mBTCUSDT[0m
+[2m2026-05-08T16:35:08.932699Z[0m [[32m[1minfo     [0m] [1mbacktest.loading              [0m [36msymbol[0m=[35mETHUSDT[0m
+[2m2026-05-08T16:35:08.932975Z[0m [[32m[1minfo     [0m] [1mbacktest.loading              [0m [36msymbol[0m=[35mSOLUSDT[0m
+[2m2026-05-08T16:35:08.933088Z[0m [[32m[1minfo     [0m] [1mbacktest.loading              [0m [36msymbol[0m=[35mXRPUSDT[0m
+[2m2026-05-08T16:35:09.006118Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mSOLUSDT[0m
+[2m2026-05-08T16:35:09.007203Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mBTCUSDT[0m
+[2m2026-05-08T16:35:09.007433Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mETHUSDT[0m
+[2m2026-05-08T16:35:09.007513Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mXRPUSDT[0m
+[2m2026-05-08T16:35:09.289145Z[0m [[32m[1minfo     [0m] [1mbacktest.loading              [0m [36msymbol[0m=[35mBNBUSDT[0m
+[2m2026-05-08T16:35:10.060789Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mBNBUSDT[0m
+[2m2026-05-08T16:35:10.137200Z[0m [[32m[1minfo     [0m] [1mbacktest.loading              [0m [36msymbol[0m=[35mLTCUSDT[0m
+[2m2026-05-08T16:35:10.137347Z[0m [[32m[1minfo     [0m] [1mbacktest.loading              [0m [36msymbol[0m=[35mHYPEUSDT[0m
+[2m2026-05-08T16:35:10.137432Z[0m [[32m[1minfo     [0m] [1mbacktest.loading              [0m [36msymbol[0m=[35mXAUTUSDT[0m
+[2m2026-05-08T16:35:10.359784Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mLTCUSDT[0m
+[2m2026-05-08T16:35:10.361438Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mHYPEUSDT[0m
+[2m2026-05-08T16:35:10.362040Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mXAUTUSDT[0m
+============================================================
+BACKTEST REPORT
+============================================================
+trades         : 72
+wins           : 72
+losses         : 0
+win rate       : 100.00%
+gross PnL      : +733.6794 USDT
+fees (signed)  : -16.5528 USDT  (negative = rebate)
+net PnL        : +750.2322 USDT
+max drawdown   : 1965.3775 USDT
+max DD %       : 6.55%
+liquidated     : False
+near liq       : False
+max margin r.  : 0.17%
+min liq dist   : 0.00%
+worst unreal.  : -758.8475 USDT
+recovery time  : 2874.23 h
+open exposure  : 8374.5299 USDT
+
+Per-symbol PnL:
+------------------------------------------------------------
+symbol          n    W    L       gross      fees         net
+ETHUSDT        13   13    0    171.6000   -3.6260    175.2260
+XAUTUSDT       18   18    0    152.8794   -4.3534    157.2327
+BNBUSDT        15   15    0    138.6000   -2.8426    141.4426
+LTCUSDT         9    9    0    105.6000   -2.1740    107.7740
+SOLUSDT         7    7    0     72.6000   -1.5807     74.1807
+BTCUSDT         5    5    0     52.8000   -1.1180     53.9180
+XRPUSDT         5    5    0     39.6000   -0.8580     40.4580
+
+long PnL       : +298.6658 USDT
+short PnL      : +435.0136 USDT
+
+Final state:
+  BTCUSDT: MERGE_PENDING size=0.007486099992433084 bep=88163.3963
+  ETHUSDT: MERGE_PENDING size=0.699087740950067 bep=2832.2625
+  SOLUSDT: MERGE_PENDING size=10.301172298503918 bep=128.1408
+  XRPUSDT: MERGE_PENDING size=336.37112988769866 bep=1.9621
+  BNBUSDT: MERGE_PENDING size=0.7421941835253919 bep=889.2552
+  LTCUSDT: MERGE_PENDING size=8.6238757356999 bep=76.5317
+  XAUTUSDT: MERGE_PENDING size=0.14284449555391637 bep=4620.4091
+
+====================================================================================================================
+MONTHLY BREAKDOWN
+====================================================================================================================
+period      trades   win%       gross      fees         net    roi%       maxDD     dd%
+--------------------------------------------------------------------------------------------------------------------
+2026-01         58 100.0%      620.40    -13.19      633.59    2.11     1011.20    3.37
+2026-02          1 100.0%       19.80     -0.26       20.06    0.07     1440.80    4.80
+2026-03          7 100.0%       70.62     -2.11       72.73    0.24      722.88    2.41
+2026-04          6 100.0%       22.86     -0.99       23.85    0.08      266.38    0.89
+--------------------------------------------------------------------------------------------------------------------
+TOTAL           72 100.0%      733.68    -16.55      750.23    2.50     1440.80    4.80

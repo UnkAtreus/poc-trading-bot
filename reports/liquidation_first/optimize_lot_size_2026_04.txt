@@ -1,0 +1,46 @@
+[2m2026-05-08T16:43:18.379770Z[0m [[32m[1minfo     [0m] [1mboot.banner                   [0m [36mleverage[0m=[35m10[0m [36mmargin_per_order[0m=[35m66.0[0m [36mmode[0m=[35mtestnet[0m [36msymbols[0m=[35m8[0m
+[2m2026-05-08T16:43:18.669314Z[0m [[32m[1minfo     [0m] [1moptimize.loading              [0m [36msymbol[0m=[35mBTCUSDT[0m
+[2m2026-05-08T16:43:18.669588Z[0m [[32m[1minfo     [0m] [1moptimize.loading              [0m [36msymbol[0m=[35mETHUSDT[0m
+[2m2026-05-08T16:43:18.669870Z[0m [[32m[1minfo     [0m] [1moptimize.loading              [0m [36msymbol[0m=[35mSOLUSDT[0m
+[2m2026-05-08T16:43:18.670055Z[0m [[32m[1minfo     [0m] [1moptimize.loading              [0m [36msymbol[0m=[35mXRPUSDT[0m
+[2m2026-05-08T16:43:18.721455Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m1[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m1[0m [36mstart_ms[0m=[35m1775001600000[0m [36msymbol[0m=[35mBTCUSDT[0m
+[2m2026-05-08T16:43:18.721551Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m1[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m1[0m [36mstart_ms[0m=[35m1775001600000[0m [36msymbol[0m=[35mSOLUSDT[0m
+[2m2026-05-08T16:43:18.721791Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m1[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m1[0m [36mstart_ms[0m=[35m1775001600000[0m [36msymbol[0m=[35mXRPUSDT[0m
+[2m2026-05-08T16:43:18.721840Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m1[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m1[0m [36mstart_ms[0m=[35m1775001600000[0m [36msymbol[0m=[35mETHUSDT[0m
+[2m2026-05-08T16:43:18.790285Z[0m [[32m[1minfo     [0m] [1moptimize.loading              [0m [36msymbol[0m=[35mBNBUSDT[0m
+[2m2026-05-08T16:43:18.910544Z[0m [[32m[1minfo     [0m] [1moptimize.loading              [0m [36msymbol[0m=[35mLTCUSDT[0m
+[2m2026-05-08T16:43:18.910701Z[0m [[32m[1minfo     [0m] [1moptimize.loading              [0m [36msymbol[0m=[35mHYPEUSDT[0m
+[2m2026-05-08T16:43:18.958104Z[0m [[32m[1minfo     [0m] [1moptimize.loading              [0m [36msymbol[0m=[35mXAUTUSDT[0m
+[2m2026-05-08T16:43:18.958696Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m1[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m1[0m [36mstart_ms[0m=[35m1775001600000[0m [36msymbol[0m=[35mBNBUSDT[0m
+[2m2026-05-08T16:43:19.038354Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m1[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m1[0m [36mstart_ms[0m=[35m1775001600000[0m [36msymbol[0m=[35mXAUTUSDT[0m
+[2m2026-05-08T16:43:19.038477Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m1[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m1[0m [36mstart_ms[0m=[35m1775001600000[0m [36msymbol[0m=[35mHYPEUSDT[0m
+[2m2026-05-08T16:43:19.039071Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m1[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m1[0m [36mstart_ms[0m=[35m1775001600000[0m [36msymbol[0m=[35mLTCUSDT[0m
+====================================================================================================================================================
+LOT SIZE OPTIMIZATION
+====================================================================================================================================================
+  margin  lev   acctCap    symCap   safe  trades         net    roi%       maxDD   liq   near  minLiq%     open$
+----------------------------------------------------------------------------------------------------------------------------------------------------
+   33.00   10     30000      5000   True      79      464.83    1.55      286.78 False  False     0.00   3417.26
+   33.00   10     30000     10000   True      79      464.83    1.55      286.78 False  False     0.00   3417.26
+   33.00   10     50000      5000   True      79      464.83    1.55      286.78 False  False     0.00   3417.26
+   33.00   10     50000     10000   True      79      464.83    1.55      286.78 False  False     0.00   3417.26
+   66.00    5     30000      5000   True      79      464.83    1.55      286.78 False  False     0.00   3417.26
+   66.00    5     30000     10000   True      79      464.83    1.55      286.78 False  False     0.00   3417.26
+   66.00    5     50000      5000   True      79      464.83    1.55      286.78 False  False     0.00   3417.26
+   66.00    5     50000     10000   True      79      464.83    1.55      286.78 False  False     0.00   3417.26
+   33.00    5     30000      5000   True      89      249.23    0.83      149.73 False  False     0.00   1555.68
+   33.00    5     30000     10000   True      89      249.23    0.83      149.73 False  False     0.00   1555.68
+   33.00    5     50000      5000   True      89      249.23    0.83      149.73 False  False     0.00   1555.68
+   33.00    5     50000     10000   True      89      249.23    0.83      149.73 False  False     0.00   1555.68
+  100.00   10     30000      5000  False      79     1408.59    4.70      869.03 False  False     0.00  10355.35
+  100.00   10     30000     10000  False      79     1408.59    4.70      869.03 False  False     0.00  10355.35
+  100.00   10     50000      5000  False      79     1408.59    4.70      869.03 False  False     0.00  10355.35
+  100.00   10     50000     10000  False      79     1408.59    4.70      869.03 False  False     0.00  10355.35
+   66.00   10     30000      5000  False      79      929.67    3.10      573.56 False  False     0.00   6834.53
+   66.00   10     30000     10000  False      79      929.67    3.10      573.56 False  False     0.00   6834.53
+   66.00   10     50000      5000  False      79      929.67    3.10      573.56 False  False     0.00   6834.53
+   66.00   10     50000     10000  False      79      929.67    3.10      573.56 False  False     0.00   6834.53
+  100.00    5     30000      5000  False      79      704.30    2.35      434.52 False  False     0.00   5177.67
+  100.00    5     30000     10000  False      79      704.30    2.35      434.52 False  False     0.00   5177.67
+  100.00    5     50000      5000  False      79      704.30    2.35      434.52 False  False     0.00   5177.67
+  100.00    5     50000     10000  False      79      704.30    2.35      434.52 False  False     0.00   5177.67

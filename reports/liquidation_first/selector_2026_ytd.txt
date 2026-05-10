@@ -1,0 +1,27 @@
+[2m2026-05-08T16:40:04.572331Z[0m [[32m[1minfo     [0m] [1mboot.banner                   [0m [36mleverage[0m=[35m10[0m [36mmargin_per_order[0m=[35m66.0[0m [36mmode[0m=[35mtestnet[0m [36msymbols[0m=[35m8[0m
+[2m2026-05-08T16:40:04.858880Z[0m [[32m[1minfo     [0m] [1mselector.loading              [0m [36msymbol[0m=[35mBTCUSDT[0m
+[2m2026-05-08T16:40:04.859060Z[0m [[32m[1minfo     [0m] [1mselector.loading              [0m [36msymbol[0m=[35mETHUSDT[0m
+[2m2026-05-08T16:40:04.859262Z[0m [[32m[1minfo     [0m] [1mselector.loading              [0m [36msymbol[0m=[35mSOLUSDT[0m
+[2m2026-05-08T16:40:04.859404Z[0m [[32m[1minfo     [0m] [1mselector.loading              [0m [36msymbol[0m=[35mXRPUSDT[0m
+[2m2026-05-08T16:40:04.904342Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mXRPUSDT[0m
+[2m2026-05-08T16:40:04.906425Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mBTCUSDT[0m
+[2m2026-05-08T16:40:04.909498Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mSOLUSDT[0m
+[2m2026-05-08T16:40:04.909905Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mETHUSDT[0m
+[2m2026-05-08T16:40:05.165604Z[0m [[32m[1minfo     [0m] [1mselector.loading              [0m [36msymbol[0m=[35mBNBUSDT[0m
+[2m2026-05-08T16:40:05.966573Z[0m [[32m[1minfo     [0m] [1mselector.loading              [0m [36msymbol[0m=[35mLTCUSDT[0m
+[2m2026-05-08T16:40:05.966767Z[0m [[32m[1minfo     [0m] [1mselector.loading              [0m [36msymbol[0m=[35mHYPEUSDT[0m
+[2m2026-05-08T16:40:05.966978Z[0m [[32m[1minfo     [0m] [1mselector.loading              [0m [36msymbol[0m=[35mXAUTUSDT[0m
+[2m2026-05-08T16:40:05.969332Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mBNBUSDT[0m
+[2m2026-05-08T16:40:06.165500Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mXAUTUSDT[0m
+[2m2026-05-08T16:40:06.169988Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mHYPEUSDT[0m
+[2m2026-05-08T16:40:06.170813Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m4[0m [36mend_ms[0m=[35m1777593600000[0m [36mmonths[0m=[35m4[0m [36mstart_ms[0m=[35m1767225600000[0m [36msymbol[0m=[35mLTCUSDT[0m
+strategy_selector:
+  regime: crash
+  action: trade
+  signal: ema_crossover
+  params: {'fast': 9, 'slow': 21}
+  net_pnl: 678.30
+  max_drawdown: 3052.65
+  min_liq_distance_pct: 0.00
+  final_open_exposure: 3870.23
+  rejected_unsafe: ["trend_filter({'inner': 'grid', 'inner_anchor_period': 200, 'inner_entry_bps': 30, 'inner_step_bps': 15, 'max_trend_bps': 30})", "bollinger_bands({'period': 20, 'num_std': 2.0})", "zscore({'period': 50, 'threshold': 2.0})"]
