@@ -227,3 +227,203 @@ uv run python scripts/batch_optimize_stability.py \
 - Existing unit tests pass.
 - Full 3,024-candidate grid can be run overnight with visible progress.
 
+# Plan: Full Optimizer + 500 Start-Date Test
+
+## Purpose
+
+Before real money, prove two separate things:
+
+1. The lot size / leverage / cap settings are safe and stable across a large parameter grid.
+2. The selected config is not dependent on a lucky start date.
+
+If either phase fails, the bot should stay in `testnet` or `no_trade`.
+
+## Phase 1: Full Optimizer
+
+Goal: find the safest lot size, leverage, account cap, per-symbol cap, and TP config.
+
+Grid:
+
+```text
+margin_usd: 10,20,30,50,66,80,100
+leverage: 3,5,10
+account_cap: 5000,7500,10000,12500,15000,20000
+symbol_cap: 500,1000,1500,2000,3000,4000
+tp_offset_bps: 30,50,75,100
+```
+
+Symbols:
+
+```text
+BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,BNBUSDT,LTCUSDT
+```
+
+Backtest window:
+
+```text
+2024-01-01 to 2026-05-01
+```
+
+Safety gates:
+
+```text
+liquidated = false
+near_liquidation = false
+max_drawdown_pct <= 25
+final_open_exposure <= 5000
+```
+
+Stability gates:
+
+```text
+positive_month_pct >= 70
+target_month_pct >= 50
+target_monthly_roi_pct >= 0.5
+longest_non_positive_stretch <= 2
+worst_monthly_dd_pct <= 10
+```
+
+Output:
+
+```text
+logs/batch_optimize_stability_2024_2026_core.csv
+reports/batch_optimize_stability_2024_2026_core.md
+```
+
+Decision rule:
+
+- Pick only candidates where `safe=true` and `stable=true`.
+- Rank by stability score first.
+- Prefer lower `margin_usd` if two candidates have similar score/profit.
+- Keep top 5 configs for Phase 2.
+- If no candidates pass, return `no_trade` and reduce risk grid.
+
+## Phase 2: 500 Start-Date Test
+
+Goal: prove the selected config does not only work from one lucky start date.
+
+Inputs:
+
+```text
+use top 5 configs from Phase 1
+earliest_start: 2021-01-01
+latest_start: 2026-01-01
+end: current available date
+count: 500 evenly spaced start dates
+symbols: BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,BNBUSDT,LTCUSDT
+```
+
+For each start date:
+
+```text
+run backtest from start date to end date
+collect liquidation metrics
+collect drawdown/open exposure metrics
+collect monthly stability metrics
+write one CSV row immediately
+```
+
+Pass condition for each start date:
+
+```text
+liquidated = false
+near_liquidation = false
+max_drawdown_pct <= 25
+final_open_exposure <= 5000
+positive_month_pct >= 70
+target_month_pct >= 50
+longest_non_positive_stretch <= 2
+worst_monthly_dd_pct <= 10
+```
+
+Output:
+
+```text
+logs/start_date_sensitivity_500_core6.csv
+reports/start_date_sensitivity_500_core6.md
+```
+
+Decision rule:
+
+- If all 500 start dates pass, the config is eligible for testnet forward testing.
+- If any start date fails, inspect failure reason.
+- If failures are small, reduce lot size/caps and retest.
+- If many fail, reject the strategy/config.
+
+Existing command:
+
+```bash
+uv run python scripts/start_date_sensitivity.py \
+  --earliest-start 2021-01-01 \
+  --latest-start 2026-01-01 \
+  --end 2026-05-09 \
+  --count 500 \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,BNBUSDT,LTCUSDT \
+  --output-csv logs/start_date_sensitivity_500_core6.csv \
+  --output-report reports/start_date_sensitivity_500_core6.md
+```
+
+## Phase 3: Testnet Forward Test
+
+Goal: compare live testnet behavior against backtest behavior.
+
+Minimum duration:
+
+```text
+1 to 2 weeks
+```
+
+Check:
+
+```text
+actual fill rate
+rejected orders
+maker vs taker behavior
+slippage/spread
+partial fills
+stuck orders
+websocket stability
+restart recovery
+actual PnL vs expected PnL
+open exposure growth
+```
+
+Pass condition:
+
+```text
+no unexpected position
+no stuck order
+no uncontrolled merge loop
+no websocket/reconcile drift
+actual fills are close enough to model
+kill switch works
+restart works
+```
+
+## Phase 4: Mainnet Gate
+
+Mainnet is allowed only if all are true:
+
+```text
+batch optimizer has at least one safe+stable config
+500 start-date test passes for selected config
+testnet forward test passes
+kill switch works
+restart/reconcile works
+no unknown open exposure
+```
+
+Initial mainnet pilot must be smaller than the final target:
+
+```text
+margin_usd <= 10 to 20
+account_cap <= 1000 to 3000
+symbols <= 1 to 2
+manual monitoring required
+```
+
+If any condition fails:
+
+```text
+do not launch real money
+```
