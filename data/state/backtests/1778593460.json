@@ -1,0 +1,23 @@
+{
+  "duration_s": 31.110820457804948,
+  "end": "2026-05-01",
+  "exit_code": 0,
+  "finished_at": 1778593492.1755562,
+  "initial_equity": 30000.0,
+  "report_path": "reports/dashboard_backtest_1778593460.md",
+  "signal": "",
+  "start": "2026-02-01",
+  "started_at": 1778593461.063838,
+  "started_at_utc": "2026-05-12T13:44:20.869189+00:00",
+  "status": "finished",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "XRPUSDT",
+    "BNBUSDT",
+    "HYPEUSDT",
+    "XAUTUSDT"
+  ],
+  "ts": 1778593460
+}

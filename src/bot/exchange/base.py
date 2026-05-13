@@ -33,7 +33,15 @@ class ExchangeAdapter(ABC):
 
     @abstractmethod
     async def place_limit(
-        self, symbol: str, side: Side, qty: float, price: float, link_id: str
+        self,
+        symbol: str,
+        side: Side,
+        qty: float,
+        price: float,
+        link_id: str,
+        *,
+        reduce_only: bool = False,
+        post_only: bool = True,
     ) -> OrderAck: ...
 
     @abstractmethod

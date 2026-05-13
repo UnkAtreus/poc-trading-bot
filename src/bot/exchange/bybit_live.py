@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from threading import Thread
 from typing import Any
 
@@ -34,6 +34,26 @@ from bot.models import (
 log = get_logger(__name__)
 
 CATEGORY = "linear"
+
+
+def _floor_to_step(value: Decimal, step: Decimal) -> Decimal:
+    return (value / step).to_integral_value(rounding=ROUND_DOWN) * step
+
+
+def _format_decimal(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def _normalize_order(inst: Instrument, qty: float, price: float) -> tuple[str, str, str | None]:
+    qty_dec = _floor_to_step(Decimal(str(qty)), inst.qty_step)
+    price_dec = _floor_to_step(Decimal(str(price)), inst.tick_size)
+
+    if qty_dec < inst.min_qty:
+        return "", "", f"qty_below_min({qty_dec} < {inst.min_qty})"
+    if qty_dec * price_dec < inst.min_notional:
+        return "", "", f"notional_below_min({qty_dec * price_dec} < {inst.min_notional})"
+
+    return _format_decimal(qty_dec), _format_decimal(price_dec), None
 
 
 class BybitLive(ExchangeAdapter):
@@ -102,7 +122,23 @@ class BybitLive(ExchangeAdapter):
                 return
             log.warning("set_leverage_error", symbol=symbol, error=msg)
 
-    async def place_limit(self, symbol, side: Side, qty, price, link_id) -> OrderAck:
+    async def place_limit(
+        self,
+        symbol,
+        side: Side,
+        qty,
+        price,
+        link_id,
+        *,
+        reduce_only: bool = False,
+        post_only: bool = True,
+    ) -> OrderAck:
+        inst = await self.get_instrument(symbol)
+        qty_str, price_str, reason = _normalize_order(inst, qty, price)
+        if reason is not None:
+            log.warning("place_order_invalid", symbol=symbol, link_id=link_id, reason=reason)
+            return OrderAck(link_id=link_id, order_id="", accepted=False, reason=reason)
+
         async with self._limiter:
             try:
                 r = await asyncio.to_thread(
@@ -111,9 +147,10 @@ class BybitLive(ExchangeAdapter):
                     symbol=symbol,
                     side=side.value,
                     orderType="Limit",
-                    qty=str(qty),
-                    price=str(price),
-                    timeInForce="PostOnly",
+                    qty=qty_str,
+                    price=price_str,
+                    timeInForce="PostOnly" if post_only else "GTC",
+                    reduceOnly=reduce_only,
                     orderLinkId=link_id,
                 )
             except Exception as e:

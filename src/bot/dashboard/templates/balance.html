@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block content %}
+{% set s = summary or {} %}
+
+<section class="metric-grid">
+  <div class="metric">
+    <div class="metric-label">Total equity</div>
+    <div class="metric-value">{{ "%.2f"|format(s.current_equity or 0) }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Available balance</div>
+    <div class="metric-value">{{ "%.2f"|format(s.current_available or 0) }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Margin in use</div>
+    <div class="metric-value">{{ "%.2f"|format(s.margin_in_use or 0) }}
+      <span class="subtle" style="font-size:12px;font-weight:500;margin-left:6px">
+        {{ "%.1f"|format(s.margin_utilization_pct or 0) }}%
+      </span>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">24h equity change</div>
+    <div class="metric-value {{ 'pos' if (s.equity_change_24h or 0) > 0 else ('neg' if (s.equity_change_24h or 0) < 0 else '') }}">
+      {{ "%+.2f"|format(s.equity_change_24h or 0) }}
+      <span class="subtle" style="font-size:12px;font-weight:500;margin-left:6px">
+        {{ "%+.2f"|format(s.equity_change_24h_pct or 0) }}%
+      </span>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Unrealised PnL</div>
+    <div class="metric-value {{ 'pos' if (s.current_unrealised or 0) > 0 else ('neg' if (s.current_unrealised or 0) < 0 else '') }}">
+      {{ "%+.2f"|format(s.current_unrealised or 0) }}
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Cum. realised PnL</div>
+    <div class="metric-value {{ 'pos' if (s.current_realised_cum or 0) > 0 else ('neg' if (s.current_realised_cum or 0) < 0 else '') }}">
+      {{ "%+.2f"|format(s.current_realised_cum or 0) }}
+    </div>
+  </div>
+</section>
+
+<section class="card highlight-row">
+  <div class="highlight">
+    <span class="metric-label">Peak equity</span>
+    <strong>{{ "%.2f"|format(s.peak_equity or 0) }}</strong>
+    <span class="subtle">{{ s.peak_ts or '' }}</span>
+  </div>
+  <div class="highlight">
+    <span class="metric-label">Current drawdown</span>
+    <strong class="{{ 'neg' if (s.current_drawdown or 0) > 0 else '' }}">{{ "%.2f"|format(s.current_drawdown or 0) }}</strong>
+    <span class="subtle">({{ "%.2f"|format(s.current_drawdown_pct or 0) }}%)</span>
+  </div>
+  <div class="highlight">
+    <span class="metric-label">Max drawdown</span>
+    <strong class="{{ 'neg' if (s.max_drawdown_pct or 0) > 0 else '' }}">{{ "%.2f"|format(s.max_drawdown or 0) }}</strong>
+    <span class="subtle">({{ "%.2f"|format(s.max_drawdown_pct or 0) }}%) {{ s.max_drawdown_ts or '' }}</span>
+  </div>
+  <div class="highlight">
+    <span class="metric-label">Snapshots</span>
+    <strong>{{ s.snapshots or 0 }}</strong>
+  </div>
+</section>
+
+{% if s.snapshots %}
+<section class="card">
+  <div class="card-head">
+    <h2>Equity & drawdown</h2>
+    <p class="subtle">Line = total equity · area = running drawdown from peak.</p>
+  </div>
+  <div class="chart-wrap"><canvas data-chart="equity-drawdown" data-endpoint="/api/balance-summary" height="260"></canvas></div>
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <h2>Daily PnL (last 30 days)</h2>
+    {% if s.daily_pnl %}
+      <div class="chart-wrap"><canvas data-chart="daily-realized-bar" data-endpoint="/api/balance-summary" height="220"></canvas></div>
+    {% else %}
+      <p class="subtle">Not enough snapshots yet.</p>
+    {% endif %}
+  </section>
+  <section class="card">
+    <h2>Margin utilization</h2>
+    <div class="chart-wrap"><canvas data-chart="margin-util" data-endpoint="/api/balance-summary" height="220"></canvas></div>
+  </section>
+</div>
+{% else %}
+<section class="card">
+  <h2>Equity over time</h2>
+  <p class="subtle">No history yet. Click <em>Regenerate monitor</em> on Overview to start collecting snapshots.</p>
+</section>
+{% endif %}
+
+<div class="grid-2">
+  <section class="card">
+    <h2>Per-symbol unrealised PnL</h2>
+    {% if s.per_symbol_unrealised %}
+      <div class="table-scroll">
+      <table class="data">
+        <thead><tr><th>Symbol</th><th>Side</th><th>Notional</th><th>Unrealised PnL</th></tr></thead>
+        <tbody>
+          {% for r in s.per_symbol_unrealised %}
+          <tr>
+            <td><strong>{{ r.symbol }}</strong></td>
+            <td><span class="pill side-{{ r.side|lower }}">{{ r.side }}</span></td>
+            <td>{{ "%.2f"|format(r.notional) }}</td>
+            <td class="{{ 'pos' if r.unrealised_pnl > 0 else ('neg' if r.unrealised_pnl < 0 else '') }}">{{ "%+.4f"|format(r.unrealised_pnl) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    {% else %}
+      <p class="subtle">No open positions.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Open positions — notional split</h2>
+    {% if breakdown %}
+      <div class="chart-wrap"><canvas data-chart="positions-pie" data-endpoint="/api/positions-breakdown" height="220"></canvas></div>
+    {% else %}
+      <p class="subtle">No open positions.</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Period range</h2>
+    <p class="subtle">From the rolling snapshot history. Peak/trough across the captured window.</p>
+  </div>
+  <table class="data kv">
+    <tbody>
+      <tr><th>Period high equity</th><td>{{ "%.2f"|format(s.period_high or 0) }}</td></tr>
+      <tr><th>Period low equity</th><td>{{ "%.2f"|format(s.period_low or 0) }}</td></tr>
+      <tr><th>Snapshots captured</th><td>{{ s.snapshots or 0 }}</td></tr>
+    </tbody>
+  </table>
+</section>
+{% endblock %}

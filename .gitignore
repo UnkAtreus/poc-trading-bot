@@ -13,6 +13,7 @@ venv/
 data/klines/*.parquet
 data/state/*.json
 data/state/KILL
+data/secrets/
 logs/
 *.log
 .DS_Store

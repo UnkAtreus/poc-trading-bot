@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block content %}
+{% set a = analysis or {} %}
+
+{% if not a.available %}
+  <section class="card">
+    <h2>Log analysis</h2>
+    <p class="subtle">No log file found under <code>logs/</code>. Tail your bot to a *.log file and refresh.</p>
+  </section>
+{% else %}
+
+<section class="metric-grid">
+  <div class="metric">
+    <div class="metric-label">Total events parsed</div>
+    <div class="metric-value">{{ a.total }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Critical</div>
+    <div class="metric-value {{ 'neg' if a.critical else '' }}">{{ a.critical }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Warnings</div>
+    <div class="metric-value">{{ a.warning }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Info</div>
+    <div class="metric-value">{{ a.info }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Heartbeat age</div>
+    <div class="metric-value">{% if a.heartbeat_age_seconds %}{{ "%.0f"|format(a.heartbeat_age_seconds) }} s{% else %}n/a{% endif %}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Active symbols</div>
+    <div class="metric-value">{{ a.per_symbol|length }}</div>
+  </div>
+</section>
+
+<p class="subtle" style="margin:-6px 0 14px">Source: <code>{{ a.source }}</code>{% if a.first_ts %} · {{ a.first_ts }} → {{ a.last_ts }}{% endif %}</p>
+
+<div class="grid-2">
+  <section class="card">
+    <h2>Event timeline (15-min buckets)</h2>
+    {% if a.timeline %}
+      <div class="chart-wrap"><canvas data-chart="event-timeline" data-endpoint="/api/log-analysis" height="220"></canvas></div>
+    {% else %}
+      <p class="subtle">No timestamped events yet.</p>
+    {% endif %}
+  </section>
+  <section class="card">
+    <h2>Severity breakdown</h2>
+    {% if a.total %}
+      <div class="chart-wrap"><canvas data-chart="severity-pie" data-endpoint="/api/log-analysis" height="220"></canvas></div>
+    {% else %}
+      <p class="subtle">No events parsed.</p>
+    {% endif %}
+  </section>
+</div>
+
+<div class="grid-2">
+  <section class="card">
+    <h2>Top events</h2>
+    {% if a.top_events %}
+      <div class="table-scroll">
+        <table class="data">
+          <thead><tr><th>Event</th><th>Count</th><th>Severity</th></tr></thead>
+          <tbody>
+            {% for r in a.top_events %}
+            <tr>
+              <td><code>{{ r.event }}</code></td>
+              <td>{{ r.count }}</td>
+              <td>
+                {% if r.is_critical %}<span class="pill severity-critical">critical</span>
+                {% elif r.is_important %}<span class="pill severity-warn">important</span>
+                {% else %}<span class="pill status-queued">info</span>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="subtle">No events.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Per-symbol activity</h2>
+    {% if a.per_symbol %}
+      <div class="table-scroll">
+        <table class="data">
+          <thead><tr><th>Symbol</th><th>Events</th><th>Critical</th><th>Last event</th><th>Last ts</th></tr></thead>
+          <tbody>
+            {% for r in a.per_symbol %}
+            <tr>
+              <td><strong>{{ r.symbol }}</strong></td>
+              <td>{{ r.count }}</td>
+              <td class="{{ 'neg' if r.critical else '' }}">{{ r.critical }}</td>
+              <td><code>{{ r.last_event }}</code></td>
+              <td>{{ r.last_ts }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="subtle">No symbol-tagged events.</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Recent critical events</h2>
+    <a href="/logs" class="btn-outline">View raw events →</a>
+  </div>
+  {% if a.recent_critical %}
+    <div class="table-scroll">
+      <table class="data">
+        <thead><tr><th>Time</th><th>Level</th><th>Event</th><th>Symbol</th><th>Fields</th></tr></thead>
+        <tbody>
+          {% for ev in a.recent_critical|reverse %}
+          <tr class="critical-row">
+            <td>{{ ev.ts }}</td>
+            <td><span class="pill level-{{ ev.level|lower }}">{{ ev.level }}</span></td>
+            <td><code>{{ ev.event }}</code></td>
+            <td>{{ ev.symbol }}</td>
+            <td><code>{{ ev.fields }}</code></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="subtle">No critical events in the parsed log window.</p>
+  {% endif %}
+</section>
+
+{% endif %}
+
+<section class="card">
+  <div class="card-head">
+    <h2>Alert delivery</h2>
+    <a href="/alerting" class="btn-outline">Configure →</a>
+  </div>
+  <p class="subtle">Tune thresholds and delivery channels (Telegram / Discord) on the Alerting page.</p>
+</section>
+
+<section class="card">
+  <details>
+    <summary><strong>Live alerts report</strong> <span class="subtle">(reports/live_alerts.md)</span></summary>
+    {% if status.alerts %}
+      <pre class="markdown" style="margin-top:12px">{{ status.alerts }}</pre>
+    {% else %}
+      <p class="subtle">No alerts file yet. Regenerate the monitor from the Overview page.</p>
+    {% endif %}
+  </details>
+</section>
+
+<section class="card">
+  <details>
+    <summary><strong>AI context report</strong> <span class="subtle">(reports/live_ai_context.md)</span></summary>
+    {% if status.ai_context %}
+      <pre class="markdown" style="margin-top:12px">{{ status.ai_context }}</pre>
+    {% else %}
+      <p class="subtle">No AI context file yet. Regenerate from the Overview page.</p>
+    {% endif %}
+  </details>
+</section>
+{% endblock %}

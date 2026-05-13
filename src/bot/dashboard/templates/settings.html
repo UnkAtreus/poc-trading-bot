@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+{% set s = status.settings %}
+{% set sizing = s.sizing or {} %}
+{% set offsets = s.offsets or {} %}
+{% set risk = s.risk or {} %}
+{% set syms = s.symbols or {} %}
+
+<section class="card">
+  <h2>Current settings (safe view)</h2>
+  <table class="data kv">
+    <tbody>
+      <tr><th>Mode</th><td>{{ s.mode }}</td></tr>
+      <tr><th>Bybit API key configured</th><td>{{ "yes" if s.has_api_key else "no" }}</td></tr>
+      <tr><th>Bybit API secret configured</th><td>{{ "yes" if s.has_api_secret else "no" }}</td></tr>
+      <tr><th>Signal engine</th><td>{{ s.signal.engine if s.signal else "" }}</td></tr>
+      <tr><th>Signal params</th><td><code>{{ s.signal.params if s.signal else "" }}</code></td></tr>
+      <tr><th>Active symbols</th><td>{{ (syms.active or [])|join(", ") }}</td></tr>
+      <tr><th>Symbol overrides</th><td><code>{{ syms.overrides or {} }}</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Edit safe settings</h2>
+  <p class="subtle">Preview yields the proposed YAML. Save only after typing <code>SAVE</code> below.</p>
+  <form id="settings-form" class="form-grid">
+    <label>margin_usd<input name="margin_usd" type="number" step="any" value="{{ sizing.margin_usd }}"></label>
+    <label>leverage<input name="leverage" type="number" step="1" value="{{ sizing.leverage }}"></label>
+    <label>entry_offset_bps<input name="entry_offset_bps" type="number" step="any" value="{{ offsets.entry_offset_bps }}"></label>
+    <label>tp_offset_bps<input name="tp_offset_bps" type="number" step="any" value="{{ offsets.tp_offset_bps }}"></label>
+    <label>max_notional_per_symbol_usd<input name="max_notional_per_symbol_usd" type="number" step="any" value="{{ risk.max_notional_per_symbol_usd }}"></label>
+    <label>max_notional_account_usd<input name="max_notional_account_usd" type="number" step="any" value="{{ risk.max_notional_account_usd }}"></label>
+    <label>daily_loss_limit_usd<input name="daily_loss_limit_usd" type="number" step="any" value="{{ risk.daily_loss_limit_usd }}"></label>
+    <label class="wide">active_symbols (comma separated)<input name="active_symbols" type="text" value="{{ (syms.active or [])|join(', ') }}"></label>
+    <label class="wide">confirm (type SAVE)<input name="confirm" type="text" autocomplete="off"></label>
+    <div class="form-actions">
+      <button type="button" id="preview-btn" class="outline">Preview</button>
+      <button type="submit" class="danger" id="save-btn">Save</button>
+    </div>
+  </form>
+  <div id="preview-output" class="preview-output"></div>
+</section>
+{% endblock %}

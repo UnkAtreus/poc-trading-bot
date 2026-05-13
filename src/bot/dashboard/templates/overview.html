@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block content %}
+{% set m = status.monitor or {} %}
+{% set wallet = m.get('wallet') or {} %}
+
+{% if status.settings.mode == 'mainnet' %}
+<div class="banner danger">MAINNET MODE — orders here use real funds.</div>
+{% endif %}
+
+<section class="metric-grid" data-refresh="status">
+  <div class="metric">
+    <div class="metric-label">Severity</div>
+    <div class="metric-value pill severity-{{ (m.severity or 'unknown')|lower }}">{{ m.severity or "n/a" }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Bot alive</div>
+    <div class="metric-value">{{ "yes" if m.bot_alive else "no" }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Heartbeat age</div>
+    <div class="metric-value">{% if m.heartbeat_age_seconds %}{{ "%.0f"|format(m.heartbeat_age_seconds) }} s{% else %}n/a{% endif %}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Kill switch</div>
+    <div class="metric-value">{{ "ACTIVE" if status.kill_active else "off" }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Mode</div>
+    <div class="metric-value">{{ status.settings.mode }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Total equity</div>
+    <div class="metric-value">{{ "%.2f"|format(wallet.total_equity or 0) }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Available</div>
+    <div class="metric-value">{{ "%.2f"|format(wallet.total_available_balance or 0) }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">USDT equity</div>
+    <div class="metric-value">{{ "%.2f"|format(wallet.usdt_equity or 0) }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Daily closed PnL</div>
+    <div class="metric-value {{ 'pos' if (m.daily_closed_pnl or 0) > 0 else ('neg' if (m.daily_closed_pnl or 0) < 0 else '') }}">
+      {{ "%.2f"|format(m.daily_closed_pnl or 0) }}
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Unrealised PnL</div>
+    <div class="metric-value {{ 'pos' if (wallet.usdt_unrealised_pnl or 0) > 0 else ('neg' if (wallet.usdt_unrealised_pnl or 0) < 0 else '') }}">
+      {{ "%.2f"|format(wallet.usdt_unrealised_pnl or 0) }}
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Open positions</div>
+    <div class="metric-value">{{ (m.positions or [])|length }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Open orders</div>
+    <div class="metric-value">{{ (m.open_orders or [])|length }}</div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Recent daily PnL</h2>
+  <div class="chart-wrap"><canvas data-chart="daily-pnl" data-endpoint="/api/equity-history" height="180"></canvas></div>
+  <p class="subtle">Auto-populated from <code>logs/live_monitor_history.jsonl</code> (one row per monitor regeneration).</p>
+</section>
+
+<section class="card">
+  <h2>Current bot states</h2>
+  {% if m.current_states %}
+    <table class="data">
+      <thead><tr><th>Symbol</th><th>State</th></tr></thead>
+      <tbody>
+        {% for sym, st in m.current_states.items()|sort %}
+          <tr><td>{{ sym }}</td><td>{{ st }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="subtle">No heartbeat states found.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Issues</h2>
+  {% if m.issues %}
+    <ul class="issues">
+      {% for issue in m.issues %}
+        <li class="severity-{{ issue.severity|lower }}">
+          <span class="pill severity-{{ issue.severity|lower }}">{{ issue.severity }}</span>
+          <code>{{ issue.code }}</code>{% if issue.symbol %} <strong>{{ issue.symbol }}</strong>{% endif %} — {{ issue.message }}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="subtle">No issues reported.</p>
+  {% endif %}
+</section>
+
+<section class="card actions-card">
+  <h2>Safe actions</h2>
+  <div class="actions-grid">
+    <form method="post" action="/actions/regenerate-monitor">
+      <button type="submit" class="outline">Regenerate monitor</button>
+    </form>
+    <form method="post" action="/actions/regenerate-ai">
+      <button type="submit" class="outline">Regenerate AI context</button>
+    </form>
+    <form method="post" action="/actions/kill" onsubmit="return confirmTyped(this, 'KILL');">
+      <input type="text" name="confirm" placeholder="type KILL" autocomplete="off" style="width:120px">
+      <button type="submit" class="danger">Create kill</button>
+    </form>
+    <form method="post" action="/actions/clear-kill" onsubmit="return confirmTyped(this, 'CLEAR');">
+      <input type="text" name="confirm" placeholder="type CLEAR" autocomplete="off" style="width:120px">
+      <button type="submit" class="outline">Clear kill</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

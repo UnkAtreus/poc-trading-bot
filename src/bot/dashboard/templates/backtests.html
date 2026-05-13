@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if report %}
+  {% if report.lower().endswith('.csv') %}
+    <section class="card">
+      <h2>Backtest chart: {{ report }}</h2>
+      <div class="chart-wrap"><canvas data-chart="backtest-series" data-endpoint="/api/backtest-series?path={{ report|urlencode }}" height="220"></canvas></div>
+    </section>
+  {% endif %}
+  <section class="card report-card">
+    <div class="report-head">
+      <h2>Report: <code>{{ report }}</code></h2>
+      <a href="/backtests" class="btn-outline">← Back</a>
+    </div>
+    {% if report_error %}
+      <p class="severity-critical">{{ report_error }}</p>
+    {% else %}
+      <pre class="markdown">{{ report_text }}</pre>
+    {% endif %}
+  </section>
+{% endif %}
+
+<section class="card">
+  <div class="card-head">
+    <h2>Start backtest</h2>
+    <p class="subtle">Auto-generates a performance report on completion.</p>
+  </div>
+  <form id="backtest-form" class="form-sections">
+
+    <fieldset class="form-section">
+      <legend>Window</legend>
+      <div class="form-row two">
+        <label>Start date<input name="start" type="date" required></label>
+        <label>End date<input name="end" type="date" required></label>
+      </div>
+    </fieldset>
+
+    <fieldset class="form-section">
+      <legend>Sizing</legend>
+      <div class="form-row two">
+        <label>Initial equity (USDT)<input name="initial_equity" type="number" step="any" value="30000" required></label>
+        <div></div>
+      </div>
+    </fieldset>
+
+    <fieldset class="form-section">
+      <legend>Signal</legend>
+      <div class="form-row two">
+        <label>Engine
+          <select name="signal_engine">
+            <option value="">(use config/bot.yaml)</option>
+            {% for s in signals %}
+              <option value="{{ s }}">{{ s }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Params <span class="subtle">(optional, e.g. <code>period=20:num_std=2.0</code>)</span>
+          <input name="signal_params" type="text" autocomplete="off">
+        </label>
+      </div>
+    </fieldset>
+
+    <fieldset class="form-section symbol-picker">
+      <legend>Symbols</legend>
+      <div class="symbol-grid">
+        {% for sym in active_symbols %}
+          <label class="check">
+            <input type="checkbox" name="symbols_picked" value="{{ sym }}" checked>
+            <span>{{ sym }}</span>
+          </label>
+        {% endfor %}
+      </div>
+      <label>Additional symbols <span class="subtle">(comma separated)</span>
+        <input name="symbols_extra" type="text" placeholder="e.g. LINKUSDT,APTUSDT" autocomplete="off">
+      </label>
+    </fieldset>
+
+    <div class="form-actions">
+      <button type="submit">Start backtest</button>
+      <button type="reset" class="outline">Reset</button>
+    </div>
+  </form>
+  <div id="backtest-output" class="preview-output"></div>
+</section>
+
+<section class="card">
+  <h2>Recent jobs</h2>
+  <div class="table-scroll">
+    <table class="data" id="backtest-jobs">
+      <thead>
+        <tr><th>Started</th><th>Status</th><th>Signal</th><th>Symbols</th><th>Window</th><th>Equity</th><th>Duration</th><th>Report</th></tr>
+      </thead>
+      <tbody>
+        {% for j in jobs %}
+        <tr data-job-ts="{{ j.ts }}" data-status="{{ j.status }}">
+          <td>{{ j.started_at_utc or '' }}</td>
+          <td><span class="pill status-{{ j.status }}">{{ j.status }}</span></td>
+          <td>{{ j.signal or '' }}</td>
+          <td>{{ (j.symbols or [])|join(', ') }}</td>
+          <td>{{ j.start }} → {{ j.end }}</td>
+          <td>{{ j.initial_equity or '' }}</td>
+          <td>{% if j.duration_s %}{{ "%.1f"|format(j.duration_s) }}s{% endif %}</td>
+          <td>
+            {% if j.report_path %}
+              <a href="/backtests?report={{ j.report_path|urlencode }}">view</a>
+            {% else %}
+              <span class="subtle">pending</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="subtle">Reports are auto-generated when a backtest finishes. This table refreshes every 3s.</p>
+</section>
+
+<section class="card">
+  <details {% if not report %}open{% endif %}>
+    <summary><strong>Existing reports</strong> <span class="subtle">({{ reports|length }})</span></summary>
+    <div class="table-scroll" style="margin-top:12px">
+    <table class="data">
+      <thead><tr><th>Path</th><th>Size</th><th>Modified</th></tr></thead>
+      <tbody>
+        {% for r in reports %}
+        <tr>
+          <td><a href="/backtests?report={{ r.path|urlencode }}">{{ r.path }}</a></td>
+          <td>{{ r.size }}</td>
+          <td>{{ r.modified }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </details>
+</section>
+{% endblock %}

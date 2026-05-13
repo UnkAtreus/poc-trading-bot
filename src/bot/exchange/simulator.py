@@ -90,7 +90,17 @@ class Simulator(ExchangeAdapter):
             )
         return self._instruments[symbol]
 
-    async def place_limit(self, symbol, side, qty, price, link_id) -> OrderAck:
+    async def place_limit(
+        self,
+        symbol,
+        side,
+        qty,
+        price,
+        link_id,
+        *,
+        reduce_only: bool = False,
+        post_only: bool = True,
+    ) -> OrderAck:
         self._open.setdefault(symbol, []).append(
             _SimOrder(link_id=link_id, symbol=symbol, side=side, qty=qty, price=price,
                       purpose=self._purpose_from_link(link_id))

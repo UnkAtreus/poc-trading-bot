@@ -1,0 +1,13 @@
+enabled: true
+
+# Severity thresholds used by run_monitor.
+heartbeat_stale_seconds: 180
+repeated_failure_threshold: 3
+failure_window_seconds: 900
+daily_loss_alert_usd: 5000
+
+delivery:
+  telegram:
+    enabled: false
+  discord:
+    enabled: false

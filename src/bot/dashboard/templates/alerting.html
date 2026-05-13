@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h2>Alert thresholds</h2>
+  <p class="subtle">These control how <code>regenerate-monitor</code> classifies issues and when alerts fire.</p>
+  <form method="post" action="/alerting/save" class="form-grid">
+    <label class="wide">
+      <span><input type="checkbox" name="enabled" value="1" {{ "checked" if alerting.enabled else "" }}> Alerting enabled (master switch)</span>
+    </label>
+    <label>Heartbeat stale seconds<input type="number" step="any" name="heartbeat_stale_seconds" value="{{ alerting.heartbeat_stale_seconds }}"></label>
+    <label>Repeated failure threshold<input type="number" step="1" name="repeated_failure_threshold" value="{{ alerting.repeated_failure_threshold }}"></label>
+    <label>Failure window seconds<input type="number" step="any" name="failure_window_seconds" value="{{ alerting.failure_window_seconds }}"></label>
+    <label>Daily-loss alert (USD)<input type="number" step="any" name="daily_loss_alert_usd" value="{{ alerting.daily_loss_alert_usd }}"></label>
+    <label class="wide"><span><input type="checkbox" name="telegram_enabled" value="1" {{ "checked" if alerting.delivery.telegram.enabled else "" }}> Send to Telegram</span></label>
+    <label class="wide"><span><input type="checkbox" name="discord_enabled" value="1" {{ "checked" if alerting.delivery.discord.enabled else "" }}> Send to Discord</span></label>
+    <label class="wide">confirm (type SAVE)<input type="text" name="confirm" autocomplete="off"></label>
+    <div class="form-actions"><button type="submit" class="danger">Save</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Delivery secrets</h2>
+  <p class="subtle">Stored under <code>data/secrets/alerting.json</code> (chmod 0600, gitignored). Bybit API keys are <strong>not</strong> editable here.</p>
+  <p class="subtle">Leave a field as the masked value to keep it; submit blank to clear.</p>
+  <form method="post" action="/alerting/secrets/save" class="form-grid">
+    <label class="wide">Telegram bot token<input type="text" name="telegram_bot_token" value="{{ secrets_masked.telegram_bot_token }}" autocomplete="off"></label>
+    <label>Telegram chat id<input type="text" name="telegram_chat_id" value="{{ secrets_masked.telegram_chat_id }}" autocomplete="off"></label>
+    <label class="wide">Discord webhook URL<input type="text" name="discord_webhook_url" value="{{ secrets_masked.discord_webhook_url }}" autocomplete="off"></label>
+    <label class="wide">confirm (type SAVE)<input type="text" name="confirm" autocomplete="off"></label>
+    <div class="form-actions"><button type="submit" class="danger">Save secrets</button></div>
+  </form>
+</section>
+{% endblock %}

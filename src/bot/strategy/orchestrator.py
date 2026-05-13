@@ -4,6 +4,7 @@ actions against the exchange adapter."""
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -46,11 +47,27 @@ from bot.strategy.states import State
 
 log = get_logger(__name__)
 
+MAX_BYBIT_ORDER_LINK_ID_LEN = 45
+ORDER_LINK_RANDOM_LEN = 16
+
 
 def _link_factory():
     def f(symbol: str, side: Side, purpose: OrderPurpose, ts: float) -> str:
-        return f"{symbol}-{side.value}-{purpose.value}-{ulid.new()}"
+        suffix = str(ulid.new())[-ORDER_LINK_RANDOM_LEN:]
+        return f"{symbol}-{side.value[0]}-{purpose.value}-{suffix}"
     return f
+
+
+def _is_fatal_order_rejection(reason: str | None) -> bool:
+    if reason is None:
+        return False
+    normalized = reason.lower()
+    return "errcode: 10024" in normalized or "regulatory restrictions" in normalized
+
+
+def _tp_price(fill: float, direction: Direction, bps: float) -> float:
+    delta = fill * (bps / 10_000.0)
+    return fill + delta if direction is Direction.LONG else fill - delta
 
 
 @dataclass
@@ -223,20 +240,37 @@ class Orchestrator:
             ok, reason = self.risk.check_can_place_entry(symbol, notional)
             if not ok:
                 log.info("entry_blocked", symbol=symbol, reason=reason)
+                await self._handle_entry_rejected(symbol, rt, action.link_id, reason)
                 return
             ack = await self.adapter.place_limit(symbol, action.direction.entry_side,
                                                  action.qty, action.price, action.link_id)
             if ack.accepted:
                 self.risk.on_entry_placed(symbol, notional)
                 rt.pending_entry_notional[action.link_id] = notional
+            else:
+                await self._handle_entry_rejected(symbol, rt, action.link_id, ack.reason)
+                if _is_fatal_order_rejection(ack.reason):
+                    self._halt_for_fatal_order_error(symbol, action.link_id, ack.reason)
 
         elif isinstance(action, PlaceTP):
-            await self.adapter.place_limit(symbol, action.direction.tp_side,
-                                           action.qty, action.price, action.link_id)
+            ack = await self.adapter.place_limit(symbol, action.direction.tp_side,
+                                                 action.qty, action.price, action.link_id,
+                                                 reduce_only=True, post_only=False)
+            if not ack.accepted:
+                log.warning("tp_place_rejected", symbol=symbol, link_id=action.link_id,
+                            reason=ack.reason)
+                if _is_fatal_order_rejection(ack.reason):
+                    self._halt_for_fatal_order_error(symbol, action.link_id, ack.reason)
 
         elif isinstance(action, PlaceMergeTP):
-            await self.adapter.place_limit(symbol, action.direction.tp_side,
-                                           action.qty, action.price, action.link_id)
+            ack = await self.adapter.place_limit(symbol, action.direction.tp_side,
+                                                 action.qty, action.price, action.link_id,
+                                                 reduce_only=True, post_only=False)
+            if not ack.accepted:
+                log.warning("merge_tp_place_rejected", symbol=symbol, link_id=action.link_id,
+                            reason=ack.reason)
+                if _is_fatal_order_rejection(ack.reason):
+                    self._halt_for_fatal_order_error(symbol, action.link_id, ack.reason)
 
         elif isinstance(action, CancelEntry):
             await self.adapter.cancel(symbol, action.link_id)
@@ -257,6 +291,40 @@ class Orchestrator:
             if rt.merge_handle is not None:
                 rt.merge_handle.cancel()
                 rt.merge_handle = None
+
+    async def _handle_entry_rejected(
+        self,
+        symbol: str,
+        rt: _SymbolRuntime,
+        link_id: str,
+        reason: str | None,
+    ) -> None:
+        log.warning("entry_rejected", symbol=symbol, link_id=link_id, reason=reason)
+        decision = sm.step(
+            rt.ctx,
+            OrderRejected(link_id=link_id, purpose=OrderPurpose.ENTRY, timestamp=time.time()),
+            self.params,
+            link_id_factory=self._link_factory,
+        )
+        rt.ctx = decision.ctx
+        for action in decision.actions:
+            await self._execute(symbol, rt, action)
+        self.store.save(rt.ctx)
+
+    def _halt_for_fatal_order_error(self, symbol: str, link_id: str, reason: str | None) -> None:
+        log.error(
+            "fatal_order_rejection_stopping_bot",
+            symbol=symbol,
+            link_id=link_id,
+            reason=reason,
+        )
+        self._stop.set()
+        for sym, runtime in self._runtimes.items():
+            runtime.ctx = runtime.ctx.with_(halted=True)
+            self.store.save(runtime.ctx)
+            if runtime.merge_handle is not None:
+                runtime.merge_handle.cancel()
+                runtime.merge_handle = None
 
     def _schedule_merge_timer(self, symbol: str, rt: _SymbolRuntime, deadline: float) -> None:
         loop = asyncio.get_running_loop()
@@ -300,20 +368,99 @@ class Orchestrator:
                 if pos.is_flat and rt.ctx.state is not State.IDLE and local_size > 0:
                     log.warning("reconcile.force_idle", symbol=sym, local_size=local_size)
                     rt.ctx = Context(symbol=sym)
+                    self.risk.sync_open_notional(sym, 0.0)
                     self.store.save(rt.ctx)
                     if rt.merge_handle is not None:
                         rt.merge_handle.cancel()
                         rt.merge_handle = None
-                elif abs(local_size - exch_size) > 1e-6:
-                    # Adopt exchange size/BEP without changing the FSM state —
-                    # the next SM event will normalize.
+                elif not pos.is_flat and pos.direction is not None and (
+                    abs(local_size - exch_size) > 1e-6
+                    or rt.ctx.direction is not pos.direction
+                    or rt.ctx.state is State.IDLE
+                    or abs(rt.ctx.bep - pos.avg_price) > 1e-6
+                ):
                     log.info(
                         "reconcile.size_drift", symbol=sym,
                         local=local_size, exchange=exch_size,
                         bep_local=rt.ctx.bep, bep_exchange=pos.avg_price,
                     )
+                    await self._adopt_exchange_position(sym, rt, pos.direction, exch_size, pos.avg_price)
+                elif not pos.is_flat:
+                    await self._ensure_protective_exit_order(sym, rt)
             except Exception as e:
                 log.warning("reconcile.failed", symbol=sym, error=str(e))
+
+    async def _adopt_exchange_position(
+        self,
+        symbol: str,
+        rt: _SymbolRuntime,
+        direction: Direction,
+        size: float,
+        bep: float,
+    ) -> None:
+        """Adopt exchange position truth and recreate protective exit order."""
+        now = time.time()
+        preserve_merge = rt.ctx.state is State.MERGE_PENDING and rt.ctx.direction is direction
+        state = State.MERGE_PENDING if preserve_merge else State.IN_POSITION_TP_PENDING
+        rt.ctx = rt.ctx.with_(
+            state=state,
+            direction=direction,
+            position_size=size,
+            bep=bep,
+            first_fill_ts=rt.ctx.first_fill_ts or now,
+            pending_entry_link_id=None,
+        )
+        rt.pending_entry_notional.clear()
+        self.risk.sync_open_notional(symbol, size * bep)
+        self.store.save(rt.ctx)
+        log.warning(
+            "reconcile.adopt_exchange_position",
+            symbol=symbol,
+            state=state.value,
+            direction=direction.value,
+            size=size,
+            bep=bep,
+        )
+
+        await self.adapter.cancel_all(symbol)
+        await self._place_protective_exit_order(symbol, rt)
+
+    async def _ensure_protective_exit_order(self, symbol: str, rt: _SymbolRuntime) -> None:
+        direction = rt.ctx.direction
+        if direction is None or rt.ctx.position_size <= 0 or rt.ctx.bep <= 0:
+            return
+        orders = await self.adapter.get_open_orders(symbol)
+        if any(o.purpose in (OrderPurpose.TP, OrderPurpose.MERGE) and o.side is direction.tp_side for o in orders):
+            return
+        log.warning(
+            "reconcile.exit_order_missing",
+            symbol=symbol,
+            state=rt.ctx.state.value,
+            direction=direction.value,
+            size=rt.ctx.position_size,
+            bep=rt.ctx.bep,
+        )
+        await self._place_protective_exit_order(symbol, rt)
+
+    async def _place_protective_exit_order(self, symbol: str, rt: _SymbolRuntime) -> None:
+        direction = rt.ctx.direction
+        if direction is None or rt.ctx.position_size <= 0 or rt.ctx.bep <= 0:
+            return
+        state = State.MERGE_PENDING if rt.ctx.state is State.MERGE_PENDING else State.IN_POSITION_TP_PENDING
+        if rt.ctx.state is not state:
+            rt.ctx = rt.ctx.with_(state=state)
+            self.store.save(rt.ctx)
+
+        now = time.time()
+        exit_price = _tp_price(rt.ctx.bep, direction, self.params.tp_offset_bps)
+        purpose = OrderPurpose.MERGE if state is State.MERGE_PENDING else OrderPurpose.TP
+        link_id = self._link_factory(symbol, direction.tp_side, purpose, now)
+        if state is State.MERGE_PENDING:
+            await self._execute(symbol, rt, PlaceMergeTP(direction, exit_price, rt.ctx.position_size, link_id))
+        else:
+            await self._execute(symbol, rt, PlaceTP(direction, exit_price, rt.ctx.position_size, link_id))
+            if rt.merge_handle is None:
+                self._schedule_merge_timer(symbol, rt, now + self.params.merge_timer_seconds)
 
     async def _reconcile_loop(self) -> None:
         """Periodic reconcile against the exchange. Catches drift after WS reconnects."""

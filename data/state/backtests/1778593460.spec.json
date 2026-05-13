@@ -1,0 +1,38 @@
+{
+  "ts": "1778593460",
+  "cmd": [
+    "uv",
+    "run",
+    "trading-bot",
+    "backtest",
+    "--start",
+    "2026-02-01",
+    "--end",
+    "2026-05-01",
+    "--symbols",
+    "BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,BNBUSDT,HYPEUSDT,XAUTUSDT",
+    "--initial-equity",
+    "30000.0",
+    "--by-month",
+    "--with-risk"
+  ],
+  "log_path": "logs/dashboard_backtest_1778593460.txt",
+  "report_path": "reports/dashboard_backtest_1778593460.md",
+  "registry_path": "data/state/backtests/1778593460.json",
+  "summary": {
+    "started_at_utc": "2026-05-12T13:44:20.869189+00:00",
+    "signal": "",
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "SOLUSDT",
+      "XRPUSDT",
+      "BNBUSDT",
+      "HYPEUSDT",
+      "XAUTUSDT"
+    ],
+    "start": "2026-02-01",
+    "end": "2026-05-01",
+    "initial_equity": 30000.0
+  }
+}

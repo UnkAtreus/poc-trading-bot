@@ -81,6 +81,14 @@ class RiskManager:
         st.open_notional = max(0.0, st.open_notional - notional)
         self._account_open_notional = max(0.0, self._account_open_notional - notional)
 
+    def sync_open_notional(self, symbol: str, notional: float) -> None:
+        """Adopt authoritative exchange exposure for a symbol after reconcile."""
+        st = self._sym(symbol)
+        notional = max(0.0, notional)
+        delta = notional - st.open_notional
+        st.open_notional = notional
+        self._account_open_notional = max(0.0, self._account_open_notional + delta)
+
     def on_trade_closed(self, symbol: str, pnl: float, notional_closed: float) -> None:
         """Update consecutive losses, cooldown, daily PnL, exposure."""
         st = self._sym(symbol)

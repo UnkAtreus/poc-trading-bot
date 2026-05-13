@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h2>Filtered log events</h2>
+  <form class="filter-form" method="get" action="/logs">
+    <label>Event<input type="text" name="event" value="{{ event }}" placeholder="e.g. heartbeat"></label>
+    <label>Symbol<input type="text" name="symbol" value="{{ symbol }}" placeholder="e.g. BTCUSDT"></label>
+    <button type="submit">Apply</button>
+    <a href="/logs" class="ghost">Reset</a>
+  </form>
+  <p class="subtle">Showing latest {{ events|length }} matching events (max 120).</p>
+  {% if events %}
+    <div class="table-scroll">
+    <table class="data">
+      <thead><tr><th>Timestamp</th><th>Level</th><th>Event</th><th>Symbol</th><th>Fields</th></tr></thead>
+      <tbody>
+        {% for ev in events|reverse %}
+        <tr class="{{ 'critical-row' if ev.critical else '' }}">
+          <td>{{ ev.ts }}</td>
+          <td><span class="pill level-{{ ev.level|lower }}">{{ ev.level }}</span></td>
+          <td><code>{{ ev.event }}</code></td>
+          <td>{{ ev.symbol }}</td>
+          <td><code>{{ ev.fields }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  {% else %}
+    <p class="subtle">No events match the filter.</p>
+  {% endif %}
+</section>
+{% endblock %}

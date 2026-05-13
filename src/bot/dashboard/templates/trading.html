@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block content %}
+{% set m = status.monitor or {} %}
+{% set wallet = m.get('wallet') or {} %}
+{% set ov = overview or {} %}
+{% set totals = ov.get('totals') or {} %}
+
+<section class="metric-grid">
+  <div class="metric">
+    <div class="metric-label">Open positions</div>
+    <div class="metric-value">{{ totals.longs + totals.shorts if totals else 0 }}
+      <span class="subtle" style="font-size:12px;font-weight:500;margin-left:6px">
+        {{ totals.longs or 0 }} L · {{ totals.shorts or 0 }} S
+      </span>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Open notional</div>
+    <div class="metric-value">{{ "%.2f"|format(totals.open_notional or 0) }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Unrealised PnL</div>
+    <div class="metric-value {{ 'pos' if (totals.unrealised_pnl or 0) > 0 else ('neg' if (totals.unrealised_pnl or 0) < 0 else '') }}">
+      {{ "%.2f"|format(totals.unrealised_pnl or 0) }}
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Daily closed PnL</div>
+    <div class="metric-value {{ 'pos' if (ov.daily_closed_pnl or 0) > 0 else ('neg' if (ov.daily_closed_pnl or 0) < 0 else '') }}">
+      {{ "%.2f"|format(ov.daily_closed_pnl or 0) }}
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Winners / losers</div>
+    <div class="metric-value">
+      <span class="pos">{{ totals.winners or 0 }}</span>
+      <span class="subtle"> / </span>
+      <span class="neg">{{ totals.losers or 0 }}</span>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Pending TPs · merges · entries</div>
+    <div class="metric-value">{{ totals.pending_tps or 0 }} · {{ totals.merges or 0 }} · {{ totals.entries or 0 }}</div>
+  </div>
+</section>
+
+{% if ov.best and ov.worst and (ov.best.symbol != ov.worst.symbol or (ov.best.unrealised_pnl or 0) != 0) %}
+<section class="card highlight-row">
+  <div class="highlight">
+    <span class="metric-label">Top gainer</span>
+    <strong>{{ ov.best.symbol }}</strong>
+    <span class="pos">+{{ "%.2f"|format(ov.best.unrealised_pnl or 0) }}</span>
+    <span class="subtle">({{ "%+.2f"|format(ov.best.roi_pct or 0) }}% ROI)</span>
+  </div>
+  <div class="highlight">
+    <span class="metric-label">Top loser</span>
+    <strong>{{ ov.worst.symbol }}</strong>
+    <span class="neg">{{ "%.2f"|format(ov.worst.unrealised_pnl or 0) }}</span>
+    <span class="subtle">({{ "%+.2f"|format(ov.worst.roi_pct or 0) }}% ROI)</span>
+  </div>
+</section>
+{% endif %}
+
+<div class="grid-2">
+  <section class="card">
+    <h2>PnL by symbol</h2>
+    {% if ov.rows %}
+      <div class="chart-wrap"><canvas data-chart="pnl-bar" data-endpoint="/api/trading-overview" height="220"></canvas></div>
+    {% else %}
+      <p class="subtle">No open positions.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Notional split</h2>
+    {% if ov.rows %}
+      <div class="chart-wrap"><canvas data-chart="positions-pie" data-endpoint="/api/positions-breakdown" height="220"></canvas></div>
+    {% else %}
+      <p class="subtle">No open positions.</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Open positions</h2>
+    <p class="subtle">Leverage {{ "%.0fx"|format(ov.leverage or 1) }} · ROI is PnL relative to allocated margin.</p>
+  </div>
+  {% if ov.rows %}
+    <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>State</th>
+          <th>Side</th>
+          <th>Size</th>
+          <th>BEP</th>
+          <th>Mark</th>
+          <th>Δ% price</th>
+          <th>TP target</th>
+          <th>Δ% TP</th>
+          <th>Notional</th>
+          <th>Margin</th>
+          <th>Unrealised PnL</th>
+          <th>ROI %</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in ov.rows %}
+        <tr>
+          <td><strong>{{ r.symbol }}</strong></td>
+          <td><span class="pill state-{{ (r.state or 'idle')|lower|replace('_', '-') }}">{{ r.state or 'n/a' }}</span></td>
+          <td><span class="pill side-{{ r.side|lower }}">{{ r.side }}</span></td>
+          <td>{{ "%.6g"|format(r.size) }}</td>
+          <td>{{ "%.6g"|format(r.avg_price) }}</td>
+          <td>{{ "%.6g"|format(r.mark_price) }}</td>
+          <td class="{{ 'pos' if r.price_diff_pct > 0 else ('neg' if r.price_diff_pct < 0 else '') }}">
+            {{ "%+.3f"|format(r.price_diff_pct) }}%
+          </td>
+          <td>{% if r.tp_price %}{{ "%.6g"|format(r.tp_price) }}<span class="subtle"> ({{ r.pending_tps }})</span>{% else %}<span class="subtle">—</span>{% endif %}</td>
+          <td>{% if r.tp_distance_pct is not none %}{{ "%+.3f"|format(r.tp_distance_pct) }}%{% else %}<span class="subtle">—</span>{% endif %}</td>
+          <td>{{ "%.2f"|format(r.notional) }}</td>
+          <td>{{ "%.2f"|format(r.margin) }}</td>
+          <td class="{{ 'pos' if r.unrealised_pnl > 0 else ('neg' if r.unrealised_pnl < 0 else '') }}">
+            {{ "%+.4f"|format(r.unrealised_pnl) }}
+          </td>
+          <td class="{{ 'pos' if r.roi_pct > 0 else ('neg' if r.roi_pct < 0 else '') }}">
+            {{ "%+.2f"|format(r.roi_pct) }}%
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  {% else %}
+    <p class="subtle">No open positions.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Open orders</h2>
+  {% if m.open_orders %}
+    <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr><th>Symbol</th><th>Side</th><th>Purpose</th><th>Qty</th><th>Price</th><th>Reduce-only</th><th>Link id</th></tr>
+      </thead>
+      <tbody>
+        {% for o in m.open_orders %}
+        <tr>
+          <td>{{ o.symbol }}</td>
+          <td><span class="pill side-{{ o.side|lower }}">{{ o.side }}</span></td>
+          <td><span class="pill purpose-{{ o.purpose }}">{{ o.purpose }}</span></td>
+          <td>{{ "%.6g"|format(o.qty or 0) }}</td>
+          <td>{{ "%.6g"|format(o.price or 0) }}</td>
+          <td>{{ "yes" if o.reduce_only else "no" }}</td>
+          <td><code>{{ o.link_id }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  {% else %}
+    <p class="subtle">No open orders.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <details>
+    <summary><strong>Local state files</strong> <span class="subtle">({{ states|length }})</span></summary>
+    <div class="table-scroll" style="margin-top:12px">
+    <table class="data">
+      <thead><tr><th>File</th><th>State</th><th>Direction</th><th>Size</th><th>BEP</th><th>Updated</th></tr></thead>
+      <tbody>
+        {% for name, data in states.items() %}
+        <tr>
+          <td>{{ name }}</td>
+          <td>{{ data.get('state', '') }}</td>
+          <td>{{ data.get('direction', '') }}</td>
+          <td>{{ data.get('position_size', '') }}</td>
+          <td>{{ data.get('bep', '') }}</td>
+          <td>{{ data.get('updated_at', '') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </details>
+</section>
+{% endblock %}
