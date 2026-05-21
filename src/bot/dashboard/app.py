@@ -22,8 +22,20 @@ def create_app(root: Path | str = ".") -> FastAPI:
     service = DashboardService(root_path)
     app = FastAPI(title="Trading Bot Dashboard")
     app.state.dashboard_service = service
-    app.mount("/static", StaticFiles(directory=PACKAGE_DIR / "static"), name="static")
+    static_dir = PACKAGE_DIR / "static"
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
     templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
+
+    def static_url(path: str) -> str:
+        rel = path.lstrip("/")
+        target = static_dir / rel
+        try:
+            version = int(target.stat().st_mtime)
+        except OSError:
+            version = 0
+        return f"/static/{rel}?v={version}"
+
+    templates.env.globals["static_url"] = static_url
 
     def require_auth(credentials: Annotated[HTTPBasicCredentials, Depends(security)]) -> str:
         password = service.password()
@@ -174,6 +186,22 @@ def create_app(root: Path | str = ".") -> FastAPI:
             raise HTTPException(status_code=400, detail="type SAVE to confirm")
         service.save_alert_secrets_values(locals())
         return RedirectResponse("/alerting", status_code=303)
+
+    @app.post("/alerting/test")
+    def alerting_test(
+        channel: Annotated[str, Form()],
+        telegram_bot_token: Annotated[str, Form()] = "",
+        telegram_chat_id: Annotated[str, Form()] = "",
+        discord_webhook_url: Annotated[str, Form()] = "",
+        _: str = Depends(require_auth),
+    ):
+        overrides = {
+            "telegram_bot_token": telegram_bot_token,
+            "telegram_chat_id": telegram_chat_id,
+            "discord_webhook_url": discord_webhook_url,
+        }
+        result = service.test_alert_delivery(channel, overrides=overrides)
+        return JSONResponse(result, status_code=200 if result.get("ok") else 400)
 
     @app.get("/api/status")
     def api_status(_: str = Depends(require_auth)):

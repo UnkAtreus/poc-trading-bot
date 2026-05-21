@@ -117,6 +117,39 @@
     });
   }
 
+  const secretsForm = document.getElementById("secrets-form");
+  const testOutput = document.getElementById("alert-test-output");
+  if (secretsForm && testOutput) {
+    secretsForm.querySelectorAll("button[data-test-channel]").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        const channel = btn.getAttribute("data-test-channel");
+        const params = new URLSearchParams();
+        params.append("channel", channel);
+        const fields = ["telegram_bot_token", "telegram_chat_id", "discord_webhook_url"];
+        fields.forEach(function (name) {
+          const input = secretsForm.querySelector('input[name="' + name + '"]');
+          if (input) params.append(name, input.value);
+        });
+        testOutput.hidden = false;
+        testOutput.textContent = "Sending test to " + channel + "...";
+        btn.disabled = true;
+        try {
+          const res = await fetch("/alerting/test", { method: "POST", body: params });
+          let data = {};
+          try { data = await res.json(); } catch (_) {}
+          const ok = data.ok === true;
+          const status = data.status_code === null || data.status_code === undefined ? "-" : data.status_code;
+          const detail = data.detail || (ok ? "delivered" : "no detail");
+          testOutput.textContent = (ok ? "OK" : "FAIL") + " [" + channel + "] status=" + status + " — " + detail;
+        } catch (err) {
+          testOutput.textContent = "FAIL [" + channel + "] — " + err;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
   const backtestForm = document.getElementById("backtest-form");
   if (backtestForm) {
     const out = document.getElementById("backtest-output");

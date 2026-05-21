@@ -486,6 +486,83 @@ def test_alerting_route_renders(repo: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert "Alert thresholds" in res.text
 
 
+def test_alerting_test_route_discord_ok(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "secret")
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(204)
+
+    real_client = httpx.Client
+
+    def mock_client(*args, **kwargs):
+        return real_client(transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr("bot.monitoring.alerting.httpx.Client", mock_client)
+
+    client = TestClient(create_app(repo))
+    res = client.post(
+        "/alerting/test",
+        data={
+            "channel": "discord",
+            "discord_webhook_url": "https://discord.example/webhook/abc",
+        },
+        auth=("admin", "secret"),
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["channel"] == "discord"
+    assert calls and "discord.example" in calls[0]
+
+
+def test_alerting_test_route_telegram_missing_secret(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "secret")
+    client = TestClient(create_app(repo))
+    res = client.post(
+        "/alerting/test",
+        data={"channel": "telegram"},
+        auth=("admin", "secret"),
+    )
+    assert res.status_code == 400
+    body = res.json()
+    assert body["ok"] is False
+    assert "telegram" in body["detail"].lower()
+
+
+def test_alerting_test_route_uses_saved_secret_when_field_left_masked(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "secret")
+    saved = AlertSecrets(discord_webhook_url="https://discord.example/webhook/SAVED_TOKEN")
+    save_alert_secrets(repo / "data" / "secrets" / "alerting.json", saved)
+
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(204)
+
+    real_client = httpx.Client
+
+    def mock_client(*args, **kwargs):
+        return real_client(transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr("bot.monitoring.alerting.httpx.Client", mock_client)
+
+    client = TestClient(create_app(repo))
+    masked = "*" * (len(saved.discord_webhook_url) - 4) + saved.discord_webhook_url[-4:]
+    res = client.post(
+        "/alerting/test",
+        data={"channel": "discord", "discord_webhook_url": masked},
+        auth=("admin", "secret"),
+    )
+    assert res.status_code == 200
+    assert res.json()["ok"] is True
+    assert calls and "SAVED_TOKEN" in calls[0]
+
+
 def test_alerting_save_requires_confirm(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DASHBOARD_PASSWORD", "secret")
     client = TestClient(create_app(repo))

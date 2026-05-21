@@ -21,13 +21,20 @@
 <section class="card">
   <h2>Delivery secrets</h2>
   <p class="subtle">Stored under <code>data/secrets/alerting.json</code> (chmod 0600, gitignored). Bybit API keys are <strong>not</strong> editable here.</p>
-  <p class="subtle">Leave a field as the masked value to keep it; submit blank to clear.</p>
-  <form method="post" action="/alerting/secrets/save" class="form-grid">
+  <p class="subtle">Leave a field as the masked value to keep it; submit blank to clear. <em>Test connection</em> uses the values currently in the form (typed or saved-masked) without saving.</p>
+  <form method="post" action="/alerting/secrets/save" class="form-grid" id="secrets-form">
     <label class="wide">Telegram bot token<input type="text" name="telegram_bot_token" value="{{ secrets_masked.telegram_bot_token }}" autocomplete="off"></label>
     <label>Telegram chat id<input type="text" name="telegram_chat_id" value="{{ secrets_masked.telegram_chat_id }}" autocomplete="off"></label>
+    <div class="form-actions" style="grid-column: 1 / -1;">
+      <button type="button" class="outline" data-test-channel="telegram">Test Telegram connection</button>
+    </div>
     <label class="wide">Discord webhook URL<input type="text" name="discord_webhook_url" value="{{ secrets_masked.discord_webhook_url }}" autocomplete="off"></label>
+    <div class="form-actions" style="grid-column: 1 / -1;">
+      <button type="button" class="outline" data-test-channel="discord">Test Discord connection</button>
+    </div>
     <label class="wide">confirm (type SAVE)<input type="text" name="confirm" autocomplete="off"></label>
     <div class="form-actions"><button type="submit" class="danger">Save secrets</button></div>
   </form>
+  <div id="alert-test-output" class="preview-output" hidden></div>
 </section>
 {% endblock %}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +133,60 @@ def deliver_if_new(
     return result
 
 
+def send_test_message(
+    channel: str,
+    *,
+    secrets: AlertSecrets,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    channel = channel.strip().lower()
+    if channel not in {"telegram", "discord"}:
+        raise ValueError("channel must be telegram or discord")
+
+    message = (
+        "[TEST] Trading bot alert delivery\n"
+        f"Generated UTC: {datetime.now(timezone.utc).isoformat()}"
+    )
+    owns_client = client is None
+    client = client or httpx.Client(timeout=10.0)
+    try:
+        if channel == "telegram":
+            if not secrets.telegram_bot_token or not secrets.telegram_chat_id:
+                raise ValueError("telegram bot token and chat id are required")
+            url = f"https://api.telegram.org/bot{secrets.telegram_bot_token}/sendMessage"
+            resp = client.post(
+                url,
+                json={"chat_id": secrets.telegram_chat_id, "text": message},
+            )
+            ok = 200 <= resp.status_code < 300 and _telegram_ok(resp)
+            return {
+                "ok": ok,
+                "channel": channel,
+                "status_code": resp.status_code,
+                "detail": _response_detail(resp),
+            }
+
+        if not secrets.discord_webhook_url:
+            raise ValueError("discord webhook url is required")
+        resp = client.post(secrets.discord_webhook_url, json={"content": message})
+        return {
+            "ok": 200 <= resp.status_code < 300,
+            "channel": channel,
+            "status_code": resp.status_code,
+            "detail": _response_detail(resp),
+        }
+    except httpx.HTTPError as exc:
+        return {
+            "ok": False,
+            "channel": channel,
+            "status_code": None,
+            "detail": str(exc),
+        }
+    finally:
+        if owns_client:
+            client.close()
+
+
 def _format_message(snapshot: MonitorSnapshot, critical: list) -> str:
     lines = [
         f"[{snapshot.severity}] Trading bot alert ({snapshot.mode})",
@@ -144,6 +199,29 @@ def _format_message(snapshot: MonitorSnapshot, critical: list) -> str:
     if len(critical) > 10:
         lines.append(f"... and {len(critical) - 10} more")
     return "\n".join(lines)
+
+
+def _telegram_ok(resp: httpx.Response) -> bool:
+    try:
+        data = resp.json()
+    except ValueError:
+        return resp.status_code == 200
+    return bool(data.get("ok", False))
+
+
+def _response_detail(resp: httpx.Response) -> str:
+    try:
+        data = resp.json()
+    except ValueError:
+        text = resp.text.strip()
+        return text[:200] if text else resp.reason_phrase
+    if isinstance(data, dict):
+        for key in ("description", "message", "error"):
+            if data.get(key):
+                return str(data[key])[:200]
+        if "ok" in data:
+            return f"ok={data['ok']}"
+    return resp.reason_phrase
 
 
 def snapshot_summary(snapshot: MonitorSnapshot) -> dict[str, Any]:

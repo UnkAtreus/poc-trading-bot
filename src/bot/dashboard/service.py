@@ -28,6 +28,7 @@ from bot.monitoring.alerting import (
     mask_secret,
     save_alert_secrets,
     save_alerting,
+    send_test_message,
 )
 from bot.monitoring.live_monitor import (
     append_monitor_history,
@@ -356,6 +357,36 @@ class DashboardService:
             discord_webhook_url=_keep_or_replace(values.get("discord_webhook_url"), current.discord_webhook_url),
         )
         save_alert_secrets(self.alert_secrets_path, new)
+
+    def test_alert_delivery(
+        self,
+        channel: str,
+        *,
+        overrides: dict[str, Any] | None = None,
+        client: Any | None = None,
+    ) -> dict[str, Any]:
+        current = load_alert_secrets(self.alert_secrets_path)
+        overrides = overrides or {}
+        merged = AlertSecrets(
+            telegram_bot_token=_keep_or_replace(
+                overrides.get("telegram_bot_token"), current.telegram_bot_token
+            ),
+            telegram_chat_id=_keep_or_replace(
+                overrides.get("telegram_chat_id"), current.telegram_chat_id
+            ),
+            discord_webhook_url=_keep_or_replace(
+                overrides.get("discord_webhook_url"), current.discord_webhook_url
+            ),
+        )
+        try:
+            return send_test_message(channel, secrets=merged, client=client)
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "channel": channel.strip().lower(),
+                "status_code": None,
+                "detail": str(exc),
+            }
 
     def equity_history(self, *, limit: int = 500) -> list[dict[str, Any]]:
         if not self.history_path.exists():
