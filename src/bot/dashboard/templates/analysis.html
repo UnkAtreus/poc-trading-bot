@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% block content %}
+{% set a = analysis or {} %}
+
+<section class="card">
+  <div class="card-head">
+    <h2>Backtest analysis</h2>
+    <p class="subtle">
+      All research runs from <code>data/backtests/index.jsonl</code> flattened per strategy and
+      time window. Indexed runs: <strong>{{ a.total_runs_indexed or 0 }}</strong>.
+    </p>
+  </div>
+
+  <form id="analysis-filters" class="form-sections" onsubmit="return false;">
+
+    <fieldset class="form-section symbol-picker">
+      <legend>Strategies</legend>
+      {% if a.all_strategies %}
+        <div class="symbol-picker-toolbar">
+          <input class="compact-input" type="search" placeholder="Filter strategies" data-strategy-filter-search autocomplete="off">
+          <button type="button" class="btn-outline btn-tiny" data-strategy-select="visible">Select visible</button>
+          <button type="button" class="btn-outline btn-tiny" data-strategy-select="none">Clear</button>
+          <span class="subtle" id="strategy-count"></span>
+        </div>
+        <div class="symbol-grid" data-filter-group="strategies">
+          {% for s in a.all_strategies %}
+            {% set _short = (s.split(' / ')[-1] if ' / ' in s else s)|trim %}
+            <label class="check" title="{{ s }}">
+              <input type="checkbox" name="strategy" value="{{ s }}">
+              <span>{{ _short or s }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="subtle">No strategies indexed yet.</p>
+      {% endif %}
+      <p class="subtle">Empty = all strategies.</p>
+    </fieldset>
+
+    <fieldset class="form-section symbol-picker">
+      <legend>Symbols</legend>
+      {% if a.all_symbols %}
+        <div class="symbol-grid" data-filter-group="symbols">
+          {% for s in a.all_symbols %}
+            <label class="check">
+              <input type="checkbox" name="symbol" value="{{ s }}">
+              <span>{{ s }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="subtle">No symbols indexed yet.</p>
+      {% endif %}
+      <p class="subtle">Empty = any symbol. Matches runs containing at least one selected symbol.</p>
+    </fieldset>
+
+    <fieldset class="form-section">
+      <legend>Window & thresholds</legend>
+      <div class="form-row three">
+        <label>Window from <input name="start" type="date"></label>
+        <label>Window to <input name="end" type="date"></label>
+        <label>Quick range
+          <select name="quick_range">
+            <option value="">(custom)</option>
+            <option value="ytd">Year to date</option>
+            <option value="6m">Last 6 months</option>
+            <option value="12m">Last 12 months</option>
+            <option value="24m">Last 24 months</option>
+            <option value="all">All time</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-row three">
+        <label>Min trades <input name="min_trades" type="number" min="0" step="1" value="0"></label>
+        <label>Min win rate %<input name="min_win_rate_pct" type="number" min="0" max="100" step="0.1" value="0"></label>
+        <label class="check inline-check">
+          <input name="hide_zero_trades" type="checkbox" checked>
+          <span>Hide zero-trade rows</span>
+        </label>
+      </div>
+
+      <div class="form-actions">
+        <button type="button" id="analysis-apply">Apply filters</button>
+        <button type="button" class="outline" id="analysis-reset">Reset</button>
+        <span class="subtle" id="analysis-active-count" style="align-self:center;margin-left:auto;"></span>
+      </div>
+    </fieldset>
+  </form>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Primary chart</h2>
+    <p class="subtle">Pick any metric for X and Y. Scatter shows runs over time; bar collapses to per-strategy aggregate.</p>
+  </div>
+  <div class="form-row three" style="margin-bottom: 12px;">
+    <label>X axis
+      <select id="chart-x-metric">
+        <option value="start" selected>Window start (time)</option>
+        <option value="max_drawdown_pct">Max DD %</option>
+        <option value="win_rate_pct">Win rate %</option>
+        <option value="trades">Trades</option>
+        <option value="stability_score">Stability score</option>
+        <option value="avg_monthly_roi_pct">Avg monthly ROI %</option>
+        <option value="worst_monthly_dd_pct">Worst monthly DD %</option>
+        <option value="roi_pct">ROI %</option>
+        <option value="net_pnl">Net PnL</option>
+      </select>
+    </label>
+    <label>Y axis
+      <select id="chart-y-metric">
+        <option value="net_pnl" selected>Net PnL</option>
+        <option value="roi_pct">ROI %</option>
+        <option value="max_drawdown_pct">Max DD %</option>
+        <option value="win_rate_pct">Win rate %</option>
+        <option value="trades">Trades</option>
+        <option value="stability_score">Stability score</option>
+        <option value="avg_monthly_roi_pct">Avg monthly ROI %</option>
+        <option value="worst_monthly_dd_pct">Worst monthly DD %</option>
+      </select>
+    </label>
+    <label>Chart type
+      <select id="chart-type">
+        <option value="scatter" selected>Scatter + line</option>
+        <option value="bar">Bar by strategy</option>
+      </select>
+    </label>
+  </div>
+  <div class="chart-wrap"><canvas id="analysis-primary" height="340"></canvas></div>
+</section>
+
+<section class="card">
+  <h2>Risk vs Return</h2>
+  <p class="subtle">X = Max DD %, Y = ROI %. Each dot is one run. Top-left = best (low DD, high ROI).</p>
+  <div class="chart-wrap"><canvas id="analysis-risk-return" height="320"></canvas></div>
+</section>
+
+<section class="card">
+  <h2>Strategy summary</h2>
+  <p class="subtle">Click a strategy to see its settings and run a backtest with them.</p>
+  <div class="table-scroll">
+    <table class="data" id="analysis-summary">
+      <thead>
+        <tr>
+          <th>Strategy</th>
+          <th>Runs</th>
+          <th>Total net PnL</th>
+          <th>Avg ROI %</th>
+          <th>Best ROI %</th>
+          <th>Worst ROI %</th>
+          <th>Max DD %</th>
+          <th>Trades</th>
+          <th>Win rate %</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card" id="analysis-detail-panel" hidden>
+  <div class="card-head">
+    <h2 id="analysis-detail-title">Strategy details</h2>
+    <button type="button" class="btn-outline" id="analysis-detail-close">Close</button>
+  </div>
+
+  <div class="metric-grid" id="analysis-detail-metrics"></div>
+
+  <fieldset class="form-section" style="margin-top: 16px;">
+    <legend>Adjust and run a backtest</legend>
+    <div class="form-row two">
+      <label>Window
+        <select id="analysis-detail-window"></select>
+      </label>
+      <label>Symbols <span class="subtle">comma separated</span>
+        <input id="analysis-adjust-symbols" type="text" autocomplete="off">
+      </label>
+    </div>
+    <div class="form-row two">
+      <label>Signal engine
+        <select id="analysis-adjust-signal-engine">
+          <option value="">(use config/bot.yaml)</option>
+          {% for s in signals or [] %}
+            <option value="{{ s }}">{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Signal params
+        <input id="analysis-adjust-signal-params" type="text" autocomplete="off" placeholder="inner=grid:inner_entry_bps=30">
+      </label>
+    </div>
+    <div class="form-row three">
+      <label>Initial equity
+        <input id="analysis-adjust-initial-equity" type="number" step="any" min="0" autocomplete="off" placeholder="Backtests default">
+      </label>
+      <label>Margin/order
+        <input id="analysis-adjust-margin" type="number" step="any" min="0" autocomplete="off">
+      </label>
+      <label>Leverage
+        <input id="analysis-adjust-leverage" type="number" step="1" min="1" max="100" autocomplete="off">
+      </label>
+    </div>
+    <div class="form-row three">
+      <label>TP offset bps
+        <input id="analysis-adjust-tp" type="number" step="any" min="0" autocomplete="off">
+      </label>
+      <label>Account cap
+        <input id="analysis-adjust-account-cap" type="number" step="any" min="0" autocomplete="off">
+      </label>
+      <label>Per-symbol cap
+        <input id="analysis-adjust-symbol-cap" type="number" step="any" min="0" autocomplete="off">
+      </label>
+    </div>
+    <div class="form-row three">
+      <label>Daily loss limit
+        <input id="analysis-adjust-daily-loss" type="number" step="any" min="0" autocomplete="off" placeholder="bot.yaml">
+      </label>
+      <div></div>
+      <div></div>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="outline" id="analysis-adjust-reset">Reset to selected strategy</button>
+      <a class="btn-outline" id="analysis-detail-prefill" href="#">Open Backtests with adjusted settings →</a>
+    </div>
+    <p class="subtle">
+      The source report remains unchanged. These edits only change the prefilled values sent to the Backtests page.
+    </p>
+  </fieldset>
+</section>
+
+<section class="card">
+  <h2>Run rows <span class="subtle" id="analysis-row-count"></span></h2>
+  <div class="table-scroll">
+    <table class="data" id="analysis-rows">
+      <thead>
+        <tr>
+          <th>Strategy</th>
+          <th>Window</th>
+          <th>Months</th>
+          <th>Trades</th>
+          <th>Win %</th>
+          <th>ROI %</th>
+          <th>Net PnL</th>
+          <th>Max DD %</th>
+          <th>Launch pass</th>
+          <th>Symbols</th>
+          <th>Report</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+  window.__analysisInitial = {{ a|tojson }};
+</script>
+{% endblock %}

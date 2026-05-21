@@ -4,6 +4,36 @@
 {% set wallet = m.get('wallet') or {} %}
 {% set ov = overview or {} %}
 {% set totals = ov.get('totals') or {} %}
+{% set settings = status.settings or {} %}
+{% set profile = settings.profile or {} %}
+{% set syms = settings.symbols or {} %}
+{% set sizing = settings.sizing or {} %}
+{% set risk = settings.risk or {} %}
+
+<section class="profile-strip compact">
+  <div class="profile-main">
+    <span class="metric-label">Running profile</span>
+    <strong>{{ profile.name or "default" }}</strong>
+    <span class="subtle">{{ profile.config_dir or "config" }}</span>
+  </div>
+  <div class="profile-stat">
+    <span class="metric-label">Active symbols</span>
+    <div class="symbol-chip-row">
+      {% for sym in syms.active or [] %}
+        <span class="symbol-chip">{{ sym }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="profile-stat">
+    <span class="metric-label">Sizing</span>
+    <strong>{{ "%.2f"|format((sizing.margin_usd or 0) * (sizing.leverage or 0)) }}</strong>
+    <span class="subtle">{{ sizing.margin_usd or 0 }} margin · {{ sizing.leverage or 0 }}x</span>
+  </div>
+  <div class="profile-stat">
+    <span class="metric-label">Account cap</span>
+    <strong>{{ "%.0f"|format(risk.max_notional_account_usd or 0) }}</strong>
+  </div>
+</section>
 
 <section class="metric-grid">
   <div class="metric">
@@ -80,6 +110,108 @@
     {% endif %}
   </section>
 </div>
+
+{% set perf = ov.get('performance') or {} %}
+<section class="card">
+  <div class="card-head">
+    <h2>Closed performance by symbol</h2>
+    <p class="subtle">
+      {% if perf.source %}From {{ perf.source }}{% else %}From parsed bot fill events{% endif %}
+      · {{ perf.priced_trades or 0 }} priced trades
+      {% if perf.unpriced_exits %} · {{ perf.unpriced_exits }} exits missing PnL{% endif %}
+    </p>
+  </div>
+  {% if not perf.available %}
+    <p class="subtle">No bot log found yet, so closed-trade history is unavailable.</p>
+  {% elif perf.rows %}
+    {% if not perf.priced_trades %}
+      <p class="subtle">No closed fills with reconstructable PnL found yet.</p>
+    {% endif %}
+    <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Trades</th>
+          <th>Win rate</th>
+          <th>Wins</th>
+          <th>Losses</th>
+          <th>Realised PnL</th>
+          <th>Avg/trade</th>
+          <th>Best</th>
+          <th>Worst</th>
+          <th>Max DD</th>
+          <th>Last close</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in perf.rows %}
+        <tr>
+          <td><strong>{{ r.symbol }}</strong></td>
+          <td>{{ r.trades }}</td>
+          <td>{% if r.winrate_pct is not none %}{{ "%.1f"|format(r.winrate_pct) }}%{% else %}<span class="subtle">—</span>{% endif %}</td>
+          <td class="pos">{{ r.wins }}</td>
+          <td class="neg">{{ r.losses }}</td>
+          <td class="{{ 'pos' if (r.realised_pnl or 0) > 0 else ('neg' if (r.realised_pnl or 0) < 0 else '') }}">
+            {{ "%+.4f"|format(r.realised_pnl or 0) }}
+          </td>
+          <td class="{{ 'pos' if (r.avg_pnl or 0) > 0 else ('neg' if (r.avg_pnl or 0) < 0 else '') }}">
+            {{ "%+.4f"|format(r.avg_pnl or 0) }}
+          </td>
+          <td>{% if r.best_trade is not none %}<span class="pos">{{ "%+.4f"|format(r.best_trade) }}</span>{% else %}<span class="subtle">—</span>{% endif %}</td>
+          <td>{% if r.worst_trade is not none %}<span class="neg">{{ "%+.4f"|format(r.worst_trade) }}</span>{% else %}<span class="subtle">—</span>{% endif %}</td>
+          <td>
+            {{ "%.4f"|format(r.max_drawdown or 0) }}
+            {% if r.max_drawdown_pct is not none %}<span class="subtle">({{ "%.1f"|format(r.max_drawdown_pct) }}%)</span>{% endif %}
+          </td>
+          <td>{% if r.last_closed_at %}{{ r.last_closed_at|bangkok_dt }}{% else %}<span class="subtle">—</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  {% else %}
+    <p class="subtle">No symbols configured.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <details {% if perf.recent_trades %}open{% endif %}>
+    <summary><strong>Recent closed trades</strong> <span class="subtle">({{ perf.recent_trades|length if perf.recent_trades else 0 }})</span></summary>
+    {% if perf.recent_trades %}
+      <div class="table-scroll" style="margin-top:12px">
+      <table class="data">
+        <thead>
+          <tr><th>Time</th><th>Symbol</th><th>Direction</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Purpose</th><th>PnL</th></tr>
+        </thead>
+        <tbody>
+          {% for t in perf.recent_trades %}
+          <tr>
+            <td class="trade-time" title="{{ t.ts|bangkok_dt }}">
+              <span>{{ t.ts|bangkok_date }}</span>
+              <span>{{ t.ts|bangkok_time }}</span>
+            </td>
+            <td><strong>{{ t.symbol }}</strong></td>
+            <td>{{ t.direction or 'n/a' }}</td>
+            <td>{{ "%.6g"|format(t.qty or 0) }}</td>
+            <td>{% if t.entry_price %}{{ "%.6g"|format(t.entry_price) }}{% else %}<span class="subtle">—</span>{% endif %}</td>
+            <td>{% if t.exit_price %}{{ "%.6g"|format(t.exit_price) }}{% else %}<span class="subtle">—</span>{% endif %}</td>
+            <td><span class="pill purpose-{{ t.purpose }}">{{ t.purpose }}</span></td>
+            <td>
+              <span class="pnl-badge {{ 'pos' if (t.pnl or 0) > 0 else ('neg' if (t.pnl or 0) < 0 else 'flat') }}">
+                {{ "%+.4f"|format(t.pnl or 0) }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    {% else %}
+      <p class="subtle" style="margin-top:12px">No closed trade records yet.</p>
+    {% endif %}
+  </details>
+</section>
 
 <section class="card">
   <div class="card-head">
@@ -180,7 +312,7 @@
           <td>{{ data.get('direction', '') }}</td>
           <td>{{ data.get('position_size', '') }}</td>
           <td>{{ data.get('bep', '') }}</td>
-          <td>{{ data.get('updated_at', '') }}</td>
+          <td>{{ data.get('updated_at', '')|bangkok_dt }}</td>
         </tr>
         {% endfor %}
       </tbody>

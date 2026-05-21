@@ -16,7 +16,7 @@
       <tbody>
         {% for ev in events|reverse %}
         <tr class="{{ 'critical-row' if ev.critical else '' }}">
-          <td>{{ ev.ts }}</td>
+          <td>{{ ev.ts|bangkok_dt }}</td>
           <td><span class="pill level-{{ ev.level|lower }}">{{ ev.level }}</span></td>
           <td><code>{{ ev.event }}</code></td>
           <td>{{ ev.symbol }}</td>

@@ -46,7 +46,7 @@
   <div class="highlight">
     <span class="metric-label">Peak equity</span>
     <strong>{{ "%.2f"|format(s.peak_equity or 0) }}</strong>
-    <span class="subtle">{{ s.peak_ts or '' }}</span>
+    <span class="subtle">{{ s.peak_ts|bangkok_dt }}</span>
   </div>
   <div class="highlight">
     <span class="metric-label">Current drawdown</span>
@@ -56,7 +56,7 @@
   <div class="highlight">
     <span class="metric-label">Max drawdown</span>
     <strong class="{{ 'neg' if (s.max_drawdown_pct or 0) > 0 else '' }}">{{ "%.2f"|format(s.max_drawdown or 0) }}</strong>
-    <span class="subtle">({{ "%.2f"|format(s.max_drawdown_pct or 0) }}%) {{ s.max_drawdown_ts or '' }}</span>
+    <span class="subtle">({{ "%.2f"|format(s.max_drawdown_pct or 0) }}%) {{ s.max_drawdown_ts|bangkok_dt }}</span>
   </div>
   <div class="highlight">
     <span class="metric-label">Snapshots</span>

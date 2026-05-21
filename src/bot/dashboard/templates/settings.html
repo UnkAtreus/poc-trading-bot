@@ -5,25 +5,46 @@
 {% set offsets = s.offsets or {} %}
 {% set risk = s.risk or {} %}
 {% set syms = s.symbols or {} %}
+{% set profile = s.profile or {} %}
+{% set dust = s.dust_cleanup or {} %}
+{% set alerting = alerting|default({
+  "enabled": true,
+  "heartbeat_stale_seconds": 180,
+  "repeated_failure_threshold": 3,
+  "failure_window_seconds": 900,
+  "daily_loss_alert_usd": 5000,
+  "delivery": {
+    "telegram": {"enabled": false},
+    "discord": {"enabled": false}
+  }
+}, true) %}
+{% set secrets_masked = secrets_masked|default({
+  "telegram_bot_token": "",
+  "telegram_chat_id": "",
+  "discord_webhook_url": ""
+}, true) %}
 
 <section class="card">
   <h2>Current settings (safe view)</h2>
   <table class="data kv">
     <tbody>
       <tr><th>Mode</th><td>{{ s.mode }}</td></tr>
+      <tr><th>Running profile</th><td><strong>{{ profile.name or "default" }}</strong> <span class="subtle">({{ profile.source or "config" }})</span></td></tr>
+      <tr><th>Config directory</th><td><code>{{ profile.config_dir or "config" }}</code></td></tr>
       <tr><th>Bybit API key configured</th><td>{{ "yes" if s.has_api_key else "no" }}</td></tr>
       <tr><th>Bybit API secret configured</th><td>{{ "yes" if s.has_api_secret else "no" }}</td></tr>
       <tr><th>Signal engine</th><td>{{ s.signal.engine if s.signal else "" }}</td></tr>
       <tr><th>Signal params</th><td><code>{{ s.signal.params if s.signal else "" }}</code></td></tr>
       <tr><th>Active symbols</th><td>{{ (syms.active or [])|join(", ") }}</td></tr>
       <tr><th>Symbol overrides</th><td><code>{{ syms.overrides or {} }}</code></td></tr>
+      <tr><th>Dust cleanup</th><td>{{ "enabled" if dust.enabled else "disabled" }} <span class="subtle">max {{ dust.max_attempts or 0 }} attempts · retry {{ dust.retry_seconds or 0 }}s</span></td></tr>
     </tbody>
   </table>
 </section>
 
 <section class="card">
-  <h2>Edit safe settings</h2>
-  <p class="subtle">Preview yields the proposed YAML. Save only after typing <code>SAVE</code> below.</p>
+  <h2>Edit running profile settings</h2>
+  <p class="subtle">Saving updates <code>{{ profile.config_dir or "config" }}</code>. Preview yields the proposed YAML. Save only after typing <code>SAVE</code> below.</p>
   <form id="settings-form" class="form-grid">
     <label>margin_usd<input name="margin_usd" type="number" step="any" value="{{ sizing.margin_usd }}"></label>
     <label>leverage<input name="leverage" type="number" step="1" value="{{ sizing.leverage }}"></label>
@@ -40,5 +61,43 @@
     </div>
   </form>
   <div id="preview-output" class="preview-output"></div>
+</section>
+
+<section class="card" id="alerting">
+  <h2>Alert thresholds</h2>
+  <p class="subtle">These control how <code>regenerate-monitor</code> classifies issues and when alerts fire.</p>
+  <form method="post" action="/alerting/save" class="form-grid">
+    <label class="wide">
+      <span><input type="checkbox" name="enabled" value="1" {{ "checked" if alerting.enabled else "" }}> Alerting enabled (master switch)</span>
+    </label>
+    <label>Heartbeat stale seconds<input type="number" step="any" name="heartbeat_stale_seconds" value="{{ alerting.heartbeat_stale_seconds }}"></label>
+    <label>Repeated failure threshold<input type="number" step="1" name="repeated_failure_threshold" value="{{ alerting.repeated_failure_threshold }}"></label>
+    <label>Failure window seconds<input type="number" step="any" name="failure_window_seconds" value="{{ alerting.failure_window_seconds }}"></label>
+    <label>Daily-loss alert (USD)<input type="number" step="any" name="daily_loss_alert_usd" value="{{ alerting.daily_loss_alert_usd }}"></label>
+    <label class="wide"><span><input type="checkbox" name="telegram_enabled" value="1" {{ "checked" if alerting.delivery.telegram.enabled else "" }}> Send to Telegram</span></label>
+    <label class="wide"><span><input type="checkbox" name="discord_enabled" value="1" {{ "checked" if alerting.delivery.discord.enabled else "" }}> Send to Discord</span></label>
+    <label class="wide">confirm (type SAVE)<input type="text" name="confirm" autocomplete="off"></label>
+    <div class="form-actions"><button type="submit" class="danger">Save alerting</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Delivery secrets</h2>
+  <p class="subtle">Stored under <code>data/secrets/alerting.json</code> (chmod 0600, gitignored). Bybit API keys are <strong>not</strong> editable here.</p>
+  <p class="subtle">Leave a field as the masked value to keep it; submit blank to clear. <em>Test connection</em> uses the values currently in the form (typed or saved-masked) without saving.</p>
+  <form method="post" action="/alerting/secrets/save" class="form-grid" id="secrets-form">
+    <label class="wide">Telegram bot token<input type="text" name="telegram_bot_token" value="{{ secrets_masked.telegram_bot_token }}" autocomplete="off"></label>
+    <label>Telegram chat id<input type="text" name="telegram_chat_id" value="{{ secrets_masked.telegram_chat_id }}" autocomplete="off"></label>
+    <div class="form-actions" style="grid-column: 1 / -1;">
+      <button type="button" class="outline" data-test-channel="telegram">Test Telegram connection</button>
+    </div>
+    <label class="wide">Discord webhook URL<input type="text" name="discord_webhook_url" value="{{ secrets_masked.discord_webhook_url }}" autocomplete="off"></label>
+    <div class="form-actions" style="grid-column: 1 / -1;">
+      <button type="button" class="outline" data-test-channel="discord">Test Discord connection</button>
+    </div>
+    <label class="wide">confirm (type SAVE)<input type="text" name="confirm" autocomplete="off"></label>
+    <div class="form-actions"><button type="submit" class="danger">Save secrets</button></div>
+  </form>
+  <div id="alert-test-output" class="preview-output" hidden></div>
 </section>
 {% endblock %}

@@ -18,6 +18,12 @@ def main() -> int:
         description="Deterministic live safety monitor for testnet/mainnet bot runs."
     )
     parser.add_argument("--log-file", type=Path, default=None)
+    parser.add_argument(
+        "--config-dir",
+        type=Path,
+        default=Path("config"),
+        help="Directory containing bot.yaml and symbols.yaml",
+    )
     parser.add_argument("--log-dir", type=Path, default=Path("logs"))
     parser.add_argument("--state-dir", type=Path, default=Path("data/state"))
     parser.add_argument("--output-md", type=Path, default=Path("reports/live_monitor.md"))
@@ -53,7 +59,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    settings = load_settings()
+    settings = load_settings(config_dir=args.config_dir)
     if settings.env.mode is Mode.BACKTEST:
         raise SystemExit("monitor_live requires MODE=testnet or MODE=mainnet")
     if not settings.env.bybit_api_key or not settings.env.bybit_api_secret:

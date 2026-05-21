@@ -1,0 +1,4 @@
+usage: trading-bot [-h]
+                   {backtest,compare,compare-execution,stress,optimize-lot-size,optimize-stability,classify-market,select-strategy,run}
+                   ...
+trading-bot: error: unrecognized arguments: l.txt

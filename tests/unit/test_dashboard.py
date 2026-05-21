@@ -135,6 +135,155 @@ def test_dashboard_requires_auth(repo: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert res.status_code == 200
 
 
+def test_settings_is_last_nav_item_and_contains_alerting(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "secret")
+    client = TestClient(create_app(repo))
+
+    res = client.get("/settings", auth=("admin", "secret"))
+
+    assert res.status_code == 200
+    body = res.text
+    nav_links = [
+        'href="/">Overview',
+        'href="/trading">Trading',
+        'href="/balance">Balance',
+        'href="/alerts">Alerts & Logs',
+        'href="/backtests">Backtests',
+        'href="/logs">Raw Events',
+        'href="/settings">Settings',
+    ]
+    positions = [body.index(link) for link in nav_links]
+    assert positions == sorted(positions)
+    assert 'href="/alerting">Alerting' not in body
+    assert 'id="alerting"' in body
+    assert "Alert thresholds" in body
+    assert "Delivery secrets" in body
+
+
+def test_overview_renders_metrics_summary_and_charts(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "secret")
+    (repo / "logs" / "live_monitor.jsonl").write_text(
+        json.dumps({
+            "severity": "OK",
+            "wallet": {
+                "total_equity": 1234.56,
+                "total_available_balance": 800.0,
+                "usdt_unrealised_pnl": -2.50,
+            },
+            "daily_closed_pnl": 7.89,
+            "positions": [
+                {"symbol": "BTCUSDT", "side": "Buy", "size": 0.01, "mark_price": 50000.0, "unrealised_pnl": 1.0},
+                {"symbol": "ETHUSDT", "side": "Sell", "size": 0.1, "mark_price": 3000.0, "unrealised_pnl": -3.5},
+            ],
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+    # Seed enough history so chart canvases render
+    (repo / "logs" / "live_monitor_history.jsonl").write_text(
+        "\n".join(
+            json.dumps({"ts": ts, "total_equity": eq, "total_available_balance": 800.0, "usdt_cum_realised_pnl": eq - 1000.0, "daily_closed_pnl": 0.0})
+            for ts, eq in [
+                ("2026-05-12T00:00:00Z", 1000.0),
+                ("2026-05-13T00:00:00Z", 1100.0),
+                ("2026-05-14T00:00:00Z", 1234.56),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(repo))
+
+    res = client.get("/", auth=("admin", "secret"))
+
+    assert res.status_code == 200
+    body = res.text
+    # Uses the same design language as trading/balance pages
+    assert 'class="metric-grid"' in body
+    assert 'class="metric"' in body
+    assert 'class="card highlight-row"' in body
+    # Metric labels (summary)
+    assert "Total equity" in body
+    assert "1234.56" in body
+    assert "Daily PnL" in body
+    assert "+7.89" in body
+    assert "Unrealised PnL" in body
+    assert "Open positions" in body
+    assert "Severity" in body
+    assert "Mode" in body
+    # Highlight summary row
+    assert "Peak equity" in body
+    assert "24h change" in body
+    assert "Current drawdown" in body
+    assert "Max drawdown" in body
+    assert "Open notional" in body
+    # Charts wired to existing endpoints
+    assert 'data-chart="equity-drawdown"' in body
+    assert 'data-endpoint="/api/balance-summary"' in body
+    assert 'data-chart="daily-realized-bar"' in body
+    assert 'action="/actions/regenerate-monitor"' in body
+    assert "Update daily" in body
+    assert 'data-chart="positions-pie"' in body
+    assert 'data-endpoint="/api/positions-breakdown"' in body
+    # Subpage links
+    assert 'href="/trading"' in body
+    assert 'href="/balance"' in body
+    assert 'href="/alerts"' in body
+    assert 'href="/backtests"' in body
+    # Sections that live on subpages must NOT be on the overview
+    assert "WS public" not in body
+    assert 'action="/actions/kill"' not in body
+    assert 'action="/actions/restart-bot"' not in body
+
+
+def test_overview_summary_includes_aggregates(repo: Path) -> None:
+    (repo / "logs" / "live_monitor.jsonl").write_text(
+        json.dumps({
+            "severity": "WARN",
+            "wallet": {
+                "total_equity": 1000.0,
+                "total_available_balance": 600.0,
+                "usdt_unrealised_pnl": 4.0,
+            },
+            "daily_closed_pnl": 12.0,
+            "positions": [
+                {"symbol": "BTCUSDT", "side": "Buy", "size": 0.02, "mark_price": 50000.0},
+                {"symbol": "ETHUSDT", "side": "Sell", "size": 0.1, "mark_price": 3000.0},
+                {"symbol": "SOLUSDT", "side": "Buy", "size": 1.0, "mark_price": 100.0},
+            ],
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+    service = DashboardService(repo)
+    summary = service.overview_summary()
+
+    assert summary["total_equity"] == 1000.0
+    assert summary["available"] == 600.0
+    assert summary["unrealised_pnl"] == 4.0
+    assert summary["daily_pnl"] == 12.0
+    assert summary["severity"] == "WARN"
+    assert summary["open_positions"] == 3
+    assert summary["longs"] == 2
+    assert summary["shorts"] == 1
+    # 0.02 * 50000 + 0.1 * 3000 + 1.0 * 100 = 1000 + 300 + 100 = 1400
+    assert summary["open_notional"] == pytest.approx(1400.0)
+    # No history file, so DD/peak/24h are zeroed
+    assert summary["snapshots"] == 0
+    assert summary["peak_equity"] == 0
+    assert summary["max_drawdown_pct"] == 0
+
+
+def test_overview_summary_falls_back_to_unknown_when_no_monitor(repo: Path) -> None:
+    service = DashboardService(repo)
+    summary = service.overview_summary()
+    assert summary["total_equity"] == 0.0
+    assert summary["daily_pnl"] == 0.0
+    assert summary["severity"] == "unknown"
+    assert summary["kill_active"] is False
+    assert summary["mode"] in {"backtest", "testnet", "mainnet"}
+
+
 def test_status_payload_redacts_secrets(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DASHBOARD_PASSWORD", "secret")
     monkeypatch.setenv("BYBIT_API_KEY", "REAL_KEY")
@@ -319,6 +468,53 @@ def test_kill_action_requires_typed_confirmation(repo: Path, monkeypatch: pytest
     )
     assert res.status_code == 303
     assert (repo / "data" / "state" / "KILL").exists()
+
+
+def test_overview_action_routes_call_dashboard_service(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, dict]] = []
+
+    def fake_regenerate_monitor(self, **kwargs):
+        calls.append(("monitor", kwargs))
+        return {}
+
+    def fake_regenerate_ai_context(self):
+        calls.append(("ai", {}))
+        return {}
+
+    def fake_restart_bot(self, **kwargs):
+        calls.append(("restart", kwargs))
+        return {}
+
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "secret")
+    monkeypatch.setattr(DashboardService, "regenerate_monitor", fake_regenerate_monitor)
+    monkeypatch.setattr(DashboardService, "regenerate_ai_context", fake_regenerate_ai_context)
+    monkeypatch.setattr(DashboardService, "restart_bot", fake_restart_bot)
+    client = TestClient(create_app(repo))
+
+    res = client.post(
+        "/actions/regenerate-monitor",
+        data={"tmux_session": "testnet_dry_run"},
+        auth=("admin", "secret"),
+        follow_redirects=False,
+    )
+    assert res.status_code == 303
+    res = client.post("/actions/regenerate-ai", auth=("admin", "secret"), follow_redirects=False)
+    assert res.status_code == 303
+    res = client.post(
+        "/actions/restart-bot",
+        data={"tmux_session": "testnet_dry_run", "confirm": "RESTART"},
+        auth=("admin", "secret"),
+        follow_redirects=False,
+    )
+    assert res.status_code == 303
+
+    assert calls == [
+        ("monitor", {"tmux_session": "testnet_dry_run", "skip_process_check": True}),
+        ("ai", {}),
+        ("restart", {"tmux_session": "testnet_dry_run", "confirm": "RESTART"}),
+    ]
 
 
 # ---------- Alerting / history / charts ----------
@@ -659,6 +855,135 @@ def test_start_backtest_writes_spec_and_registry(repo: Path, monkeypatch: pytest
     assert spec["summary"]["symbols"] == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     assert "--by-month" in spec["cmd"]
     assert "--with-risk" in spec["cmd"]
+    assert spec["cmd"][spec["cmd"].index("--margin-usd") + 1] == "66.0"
+    assert spec["cmd"][spec["cmd"].index("--leverage") + 1] == "10"
+    assert spec["cmd"][spec["cmd"].index("--tp-offset-bps") + 1] == "100.0"
+    assert spec["summary"]["margin_usd"] == 66.0
+    assert spec["summary"]["leverage"] == 10
+    assert spec["summary"]["signal_full"] == "bollinger_bands:period=20:num_std=2.0"
+    assert spec["summary"]["signal_short"] == "bb_p20_std2"
+
+
+def test_start_backtest_uses_bot_yaml_signal_when_signal_blank(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeProc:
+        pid = 4242
+
+    monkeypatch.setattr("bot.dashboard.service.subprocess.Popen", lambda *a, **k: FakeProc())
+
+    service = DashboardService(repo)
+    result = service.start_backtest(
+        {
+            "start": "2024-01-01",
+            "end": "2024-02-01",
+            "initial_equity": "",
+        }
+    )
+    spec_path = repo / "data" / "state" / "backtests" / f"{result['ts']}.spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    expected = (
+        "trend_filter:inner=grid:inner_anchor_period=200:"
+        "inner_entry_bps=30:inner_step_bps=15:max_trend_bps=30"
+    )
+    assert spec["summary"]["signal"] == expected
+    assert spec["summary"]["signal_short"] == "trend_grid_a200_e30_s15_t30"
+    assert spec["summary"]["initial_equity"] == 30000.0
+    assert spec["cmd"][spec["cmd"].index("--signal") + 1] == expected
+
+
+def test_backtest_analysis_uses_metrics_and_hides_zero_trade_rows(repo: Path) -> None:
+    index = repo / "data" / "backtests"
+    index.mkdir(parents=True)
+    records = [
+        {
+            "kind": "cli_backtest",
+            "run_id": "good",
+            "scope": {"start": "2024-01-01", "end": "2024-02-01", "symbols": ["BTCUSDT"]},
+            "strategy": {"signal_name": "grid", "signal_params": {"inner_entry_bps": 40}},
+            "settings": {"bot": BOT_YAML},
+            "metrics": {
+                "trades": 3,
+                "wins": 2,
+                "win_rate_pct": 66.6,
+                "roi_pct": 1.2,
+                "net_pnl": 12.3,
+                "max_drawdown_pct": 0.4,
+            },
+        },
+        {
+            "kind": "cli_backtest",
+            "run_id": "empty",
+            "scope": {"start": "2024-01-01", "end": "2024-02-01", "symbols": ["BTCUSDT"]},
+            "strategy": {"signal_name": "grid", "signal_params": {"inner_entry_bps": 50}},
+            "settings": {"bot": BOT_YAML},
+            "metrics": {"trades": 0, "roi_pct": None, "net_pnl": None},
+        },
+    ]
+    (index / "index.jsonl").write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+    data = DashboardService(repo).backtest_analysis()
+    assert [row["run_id"] for row in data["rows"]] == ["good"]
+    assert data["rows"][0]["strategy"] == "grid_e40"
+    assert data["rows"][0]["trades"] == 3
+
+    with_empty = DashboardService(repo).backtest_analysis(hide_zero_trades=False)
+    assert {row["run_id"] for row in with_empty["rows"]} == {"good", "empty"}
+
+
+def test_backtest_analysis_flattens_compare_execution_rows(repo: Path) -> None:
+    index = repo / "data" / "backtests"
+    index.mkdir(parents=True)
+    record = {
+        "kind": "compare_execution_models",
+        "run_id": "compare",
+        "scope": {"start": "2025-01-01", "end": "2026-01-01", "symbols": ["BTCUSDT"]},
+        "strategy": {"signal_name": "trend_filter", "signal_params": {"inner": "grid"}},
+        "settings": {"bot": BOT_YAML},
+        "summary": {
+            "rows": [
+                {"label": "naive", "trades": 2, "wins": 2, "win_rate_pct": 100.0, "roi_pct": 1.0, "net_pnl": 10.0, "max_drawdown_pct": 0.2},
+                {"label": "realistic_0.3s", "trades": 4, "wins": 4, "win_rate_pct": 100.0, "roi_pct": 0.9, "net_pnl": 9.0, "max_drawdown_pct": 0.25},
+                # `realistic_1s` is in the strict deny-list (see service._HIDDEN_STRATEGY_NAMES)
+                # and must be filtered out of the response.
+                {"label": "realistic_1s", "trades": 3, "wins": 3, "win_rate_pct": 100.0, "roi_pct": 0.8, "net_pnl": 8.0, "max_drawdown_pct": 0.3},
+            ]
+        },
+    }
+    (index / "index.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    rows = DashboardService(repo).backtest_analysis()["rows"]
+    assert [row["strategy"] for row in rows] == [
+        "trend_grid / naive",
+        "trend_grid / realistic_0.3s",
+    ]
+    assert [row["trades"] for row in rows] == [2, 4]
+
+
+def test_analysis_page_renders_strategy_adjust_controls(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    index = repo / "data" / "backtests"
+    index.mkdir(parents=True)
+    record = {
+        "kind": "cli_backtest",
+        "run_id": "good",
+        "scope": {"start": "2024-01-01", "end": "2024-02-01", "symbols": ["BTCUSDT"]},
+        "strategy": {"signal_name": "grid", "signal_params": {"inner_entry_bps": 40}},
+        "settings": {"bot": BOT_YAML},
+        "metrics": {"trades": 3, "wins": 3, "win_rate_pct": 100.0, "roi_pct": 1.2, "net_pnl": 12.3},
+    }
+    (index / "index.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "secret")
+
+    res = TestClient(create_app(repo)).get("/analysis", auth=("admin", "secret"))
+
+    assert res.status_code == 200
+    assert "Filter strategies" in res.text
+    assert "Adjust and run a backtest" in res.text
+    assert "analysis-adjust-signal-params" in res.text
 
 
 def test_list_backtest_jobs_returns_recent(repo: Path) -> None:
@@ -670,6 +995,192 @@ def test_list_backtest_jobs_returns_recent(repo: Path) -> None:
     service = DashboardService(repo)
     jobs = service.list_backtest_jobs()
     assert {j["ts"] for j in jobs} == {1700000001, 1700000002}
+
+
+def test_list_backtest_jobs_dedupes_shards_keeping_newest_ts(repo: Path) -> None:
+    import time as _time
+
+    directory = repo / "data" / "state" / "backtests"
+    directory.mkdir(parents=True)
+    now = _time.time()
+    # Two registries for the same shard 0/8, different ts. Newest must win.
+    old = {
+        "ts": 1700000100,
+        "status": "running",
+        "shard_index": 0,
+        "shard_count": 8,
+        "started_at": now - 60,
+        "log_path": "logs/missing_old.log",
+    }
+    new = {
+        "ts": 1700000200,
+        "status": "running",
+        "shard_index": 0,
+        "shard_count": 8,
+        "started_at": now - 60,
+        "log_path": "logs/missing_new.log",
+    }
+    # A different shard index in the same run - must NOT be deduped away.
+    other = {
+        "ts": 1700000150,
+        "status": "running",
+        "shard_index": 1,
+        "shard_count": 8,
+        "started_at": now - 60,
+        "log_path": "logs/missing_other.log",
+    }
+    (directory / "1700000100_shard00of08.json").write_text(json.dumps(old), encoding="utf-8")
+    (directory / "1700000200_shard00of08.json").write_text(json.dumps(new), encoding="utf-8")
+    (directory / "1700000150_shard01of08.json").write_text(json.dumps(other), encoding="utf-8")
+
+    jobs = DashboardService(repo).list_backtest_jobs()
+    timestamps = {j["ts"] for j in jobs}
+    assert 1700000200 in timestamps
+    assert 1700000150 in timestamps
+    assert 1700000100 not in timestamps
+
+
+def test_list_backtest_jobs_marks_stale_running_when_log_idle(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time as _time
+    import subprocess as _sp
+
+    monkeypatch.setattr(
+        "bot.dashboard.service.subprocess.run",
+        lambda cmd, **kwargs: _sp.CompletedProcess(cmd, 0, stdout="", stderr=""),
+    )
+
+    directory = repo / "data" / "state" / "backtests"
+    directory.mkdir(parents=True)
+    log_path = repo / "logs" / "stale_shard.log"
+    log_path.write_text("dead log\n", encoding="utf-8")
+    long_ago = _time.time() - 7200
+    os.utime(log_path, (long_ago, long_ago))
+
+    payload = {
+        "ts": 1700000300,
+        "status": "running",
+        "shard_index": 7,
+        "shard_count": 8,
+        "started_at": long_ago,
+        "log_path": "logs/stale_shard.log",
+        "report_path": "reports/never_written.md",
+    }
+    (directory / "1700000300_shard07of08.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    jobs = DashboardService(repo).list_backtest_jobs()
+    assert len(jobs) == 1
+    assert jobs[0]["status"] == "stale"
+
+
+def test_list_backtest_jobs_uses_live_shard_process_state(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess as _sp
+    import time as _time
+
+    directory = repo / "data" / "state" / "backtests"
+    directory.mkdir(parents=True)
+    long_ago = _time.time() - 7200
+    for idx in (0, 1):
+        (directory / f"17000005{idx}_shard0{idx}of02.json").write_text(
+            json.dumps({
+                "ts": 1700000500 + idx,
+                "status": "running",
+                "shard_index": idx,
+                "shard_count": 2,
+                "started_at": long_ago,
+                "log_path": f"logs/stale_shard_{idx}.log",
+                "report_path": f"reports/never_written_{idx}.md",
+            }),
+            encoding="utf-8",
+        )
+
+    def fake_run(cmd, **kwargs):
+        assert cmd[:3] == ["ps", "-A", "-o"]
+        return _sp.CompletedProcess(
+            cmd,
+            0,
+            stdout=(
+                "123 R+ python scripts/batch_optimize_stability.py --shard-index 0 --resume\n"
+                "124 T+ python scripts/batch_optimize_stability.py --shard-index 1 --resume\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("bot.dashboard.service.subprocess.run", fake_run)
+
+    jobs = DashboardService(repo).list_backtest_jobs()
+    by_shard = {job["shard_index"]: job for job in jobs}
+    assert by_shard[0]["status"] == "running"
+    assert by_shard[1]["status"] == "paused"
+    assert by_shard[0]["process_status"] == "R+"
+    assert by_shard[1]["process_status"] == "T+"
+
+
+def test_restart_bot_requires_confirmation(repo: Path) -> None:
+    service = DashboardService(repo)
+    with pytest.raises(ValueError, match="RESTART"):
+        service.restart_bot(tmux_session="testnet_dry_run", confirm="please")
+
+
+def test_restart_bot_invokes_expected_shell_steps(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        import subprocess as _sp
+        return _sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("bot.dashboard.service.subprocess.run", fake_run)
+    monkeypatch.setattr("bot.dashboard.service.time.sleep", lambda _s: None)
+
+    result = DashboardService(repo).restart_bot(
+        tmux_session="testnet_dry_run", confirm="RESTART"
+    )
+
+    joined = [" ".join(c) for c in calls]
+    assert any(c.startswith("pkill -TERM -f bot.main run") for c in joined)
+    assert any(c.startswith("tmux kill-session -t testnet_dry_run") for c in joined)
+    assert any(c.startswith("tmux new-session -d -s testnet_dry_run") for c in joined)
+    assert result["tmux_session"] == "testnet_dry_run"
+    assert result["log_path"].startswith("logs/testnet_dry_run_")
+    assert result["log_path"].endswith(".log")
+
+
+def test_restart_bot_rejects_unsafe_session_name(repo: Path) -> None:
+    with pytest.raises(ValueError, match="session name"):
+        DashboardService(repo).restart_bot(
+            tmux_session="evil; rm -rf /", confirm="RESTART"
+        )
+
+
+def test_list_backtest_jobs_keeps_running_when_log_recently_modified(repo: Path) -> None:
+    import time as _time
+
+    directory = repo / "data" / "state" / "backtests"
+    directory.mkdir(parents=True)
+    log_path = repo / "logs" / "live_shard.log"
+    log_path.write_text("alive\n", encoding="utf-8")
+    # log touched seconds ago: shard is still alive even though started_at is old.
+    long_ago = _time.time() - 7200
+    payload = {
+        "ts": 1700000400,
+        "status": "running",
+        "shard_index": 2,
+        "shard_count": 8,
+        "started_at": long_ago,
+        "log_path": "logs/live_shard.log",
+        "report_path": "reports/never_written.md",
+    }
+    (directory / "1700000400_shard02of08.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    jobs = DashboardService(repo).list_backtest_jobs()
+    assert len(jobs) == 1
+    assert jobs[0]["status"] == "running"
 
 
 def test_dashboard_backtest_runner_writes_report(tmp_path: Path) -> None:
@@ -689,6 +1200,14 @@ def test_dashboard_backtest_runner_writes_report(tmp_path: Path) -> None:
             "start": "2024-01-01",
             "end": "2024-01-02",
             "initial_equity": 3000,
+            "signal_short": "bb_p20",
+            "signal_full": "bollinger_bands:period=20",
+            "margin_usd": 66,
+            "leverage": 10,
+            "tp_offset_bps": 100,
+            "max_notional_account": 50000,
+            "max_notional_per_symbol": 10000,
+            "daily_loss_limit": 5000,
         },
     }
     spec_path = tmp_path / "spec.json"
@@ -707,6 +1226,8 @@ def test_dashboard_backtest_runner_writes_report(tmp_path: Path) -> None:
     assert "Dashboard Backtest" in text
     assert "BACKTEST REPORT" in text
     assert "net PnL" in text
+    assert "bollinger_bands:period=20" in text
+    assert "Margin / leverage" in text
     reg = json.loads(registry_path.read_text(encoding="utf-8"))
     assert reg["status"] == "finished"
     assert reg["exit_code"] == 0
@@ -890,6 +1411,88 @@ def test_trading_overview_joins_tps_and_totals(repo: Path) -> None:
     assert eth["price_diff_pct"] < 0
 
 
+def test_trading_overview_includes_closed_performance_from_fill_logs(repo: Path) -> None:
+    (repo / "logs" / "bot.log").write_text(
+        "\n".join([
+            "2026-05-14T01:00:00Z [info     ] entry_filled symbol=BTCUSDT link_id=BTCUSDT-B-entry-a side=Buy qty=0.01 price=50000",
+            "2026-05-14T01:05:00Z [info     ] tp_filled symbol=BTCUSDT link_id=BTCUSDT-S-tp-b side=Sell qty=0.01 price=50500",
+            "2026-05-14T02:00:00Z [info     ] entry_filled symbol=ETHUSDT link_id=ETHUSDT-S-entry-c side=Sell qty=0.1 price=3000",
+            "2026-05-14T02:05:00Z [info     ] tp_filled symbol=ETHUSDT link_id=ETHUSDT-B-tp-d side=Buy qty=0.1 price=3010",
+        ])
+        + "\n",
+        encoding="utf-8",
+    )
+
+    overview = DashboardService(repo).trading_overview()
+    perf = overview["performance"]
+
+    assert perf["available"] is True
+    assert perf["source"] == "logs/bot.log"
+    assert perf["priced_trades"] == 2
+    btc = next(r for r in perf["rows"] if r["symbol"] == "BTCUSDT")
+    assert btc["trades"] == 1
+    assert btc["wins"] == 1
+    assert btc["winrate_pct"] == pytest.approx(100.0)
+    assert btc["realised_pnl"] == pytest.approx(5.0)
+    eth = next(r for r in perf["rows"] if r["symbol"] == "ETHUSDT")
+    assert eth["trades"] == 1
+    assert eth["losses"] == 1
+    assert eth["realised_pnl"] == pytest.approx(-1.0)
+    assert eth["max_drawdown"] == pytest.approx(1.0)
+    assert perf["recent_trades"][0]["symbol"] == "ETHUSDT"
+    assert perf["recent_trades"][0]["display_date"] == "May 14, 2026"
+    assert perf["recent_trades"][0]["display_time"] == "09:05:00 ICT"
+
+
+def test_trading_overview_uses_monitor_closed_pnl_when_logs_have_no_fills(repo: Path) -> None:
+    (repo / "logs" / "bot.log").write_text(
+        "2026-05-14T01:00:00Z [info     ] heartbeat states={'BTCUSDT': 'IDLE'}\n",
+        encoding="utf-8",
+    )
+    (repo / "logs" / "live_monitor.jsonl").write_text(
+        json.dumps({
+            "daily_closed_pnl": 3.5,
+            "daily_closed_pnl_by_symbol": {
+                "BTCUSDT": {
+                    "symbol": "BTCUSDT",
+                    "trades": 2,
+                    "wins": 1,
+                    "losses": 1,
+                    "realised_pnl": 3.5,
+                    "best_trade": 5.0,
+                    "worst_trade": -1.5,
+                    "max_drawdown": 1.5,
+                    "last_closed_at": "2026-05-14T01:05:00+00:00",
+                    "recent_trades": [
+                        {
+                            "ts": "2026-05-14T01:05:00+00:00",
+                            "symbol": "BTCUSDT",
+                            "purpose": "closed_pnl",
+                            "direction": "LONG",
+                            "qty": 0.01,
+                            "entry_price": 50000,
+                            "exit_price": 50500,
+                            "pnl": 5.0,
+                        }
+                    ],
+                }
+            },
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+
+    perf = DashboardService(repo).trading_overview()["performance"]
+
+    assert perf["source"] == "logs/live_monitor.jsonl daily closed PnL"
+    assert perf["priced_trades"] == 2
+    btc = next(r for r in perf["rows"] if r["symbol"] == "BTCUSDT")
+    assert btc["trades"] == 2
+    assert btc["winrate_pct"] == pytest.approx(50.0)
+    assert btc["realised_pnl"] == pytest.approx(3.5)
+    assert perf["recent_trades"][0]["purpose"] == "closed_pnl"
+
+
 def test_trading_overview_no_positions(repo: Path) -> None:
     service = DashboardService(repo)
     overview = service.trading_overview()
@@ -897,6 +1500,7 @@ def test_trading_overview_no_positions(repo: Path) -> None:
     assert overview["totals"]["open_notional"] == 0
     assert overview["best"] is None
     assert overview["worst"] is None
+    assert "performance" in overview
 
 
 def test_api_trading_overview_route(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -906,6 +1510,32 @@ def test_api_trading_overview_route(repo: Path, monkeypatch: pytest.MonkeyPatch)
     assert res.status_code == 200
     body = res.json()
     assert "rows" in body and "totals" in body
+    assert "performance" in body
+
+
+def test_trading_page_renders_closed_performance(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "secret")
+    (repo / "logs" / "bot.log").write_text(
+        "\n".join([
+            "2026-05-14T01:00:00Z [info     ] entry_filled symbol=BTCUSDT link_id=BTCUSDT-B-entry-a side=Buy qty=0.01 price=50000",
+            "2026-05-14T01:05:00Z [info     ] tp_filled symbol=BTCUSDT link_id=BTCUSDT-S-tp-b side=Sell qty=0.01 price=50500",
+        ])
+        + "\n",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(repo))
+
+    res = client.get("/trading", auth=("admin", "secret"))
+
+    assert res.status_code == 200
+    body = res.text
+    assert "Closed performance by symbol" in body
+    assert "Recent closed trades" in body
+    assert "Win rate" in body
+    assert "May 14, 2026" in body
+    assert "08:05:00 ICT" in body
+    assert "pnl-badge pos" in body
+    assert "+5.0000" in body
 
 
 def test_positions_breakdown_filters_zero(repo: Path) -> None:

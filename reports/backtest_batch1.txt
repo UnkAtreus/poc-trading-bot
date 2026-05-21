@@ -1,0 +1,57 @@
+[2m2026-05-20T13:06:42.327690Z[0m [[32m[1minfo     [0m] [1mboot.banner                   [0m [36mleverage[0m=[35m10[0m [36mmargin_per_order[0m=[35m100.0[0m [36mmode[0m=[35mtestnet[0m [36msymbols[0m=[35m6[0m
+[2m2026-05-20T13:06:42.840093Z[0m [[32m[1minfo     [0m] [1mcompare.loading               [0m [36msymbol[0m=[35mBTCUSDT[0m
+[2m2026-05-20T13:06:42.984417Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m18[0m [36mend_ms[0m=[35m1698624000000[0m [36mmonths[0m=[35m18[0m [36mstart_ms[0m=[35m1652054400000[0m [36msymbol[0m=[35mBTCUSDT[0m
+[2m2026-05-20T13:06:44.233700Z[0m [[32m[1minfo     [0m] [1mcompare.loading               [0m [36msymbol[0m=[35mETHUSDT[0m
+[2m2026-05-20T13:06:44.302738Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m18[0m [36mend_ms[0m=[35m1698624000000[0m [36mmonths[0m=[35m18[0m [36mstart_ms[0m=[35m1652054400000[0m [36msymbol[0m=[35mETHUSDT[0m
+[2m2026-05-20T13:06:45.729517Z[0m [[32m[1minfo     [0m] [1mcompare.loading               [0m [36msymbol[0m=[35mBNBUSDT[0m
+[2m2026-05-20T13:06:45.783165Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m18[0m [36mend_ms[0m=[35m1698624000000[0m [36mmonths[0m=[35m18[0m [36mstart_ms[0m=[35m1652054400000[0m [36msymbol[0m=[35mBNBUSDT[0m
+[2m2026-05-20T13:06:47.309655Z[0m [[32m[1minfo     [0m] [1mcompare.loading               [0m [36msymbol[0m=[35mSOLUSDT[0m
+[2m2026-05-20T13:06:47.489479Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m18[0m [36mend_ms[0m=[35m1698624000000[0m [36mmonths[0m=[35m18[0m [36mstart_ms[0m=[35m1652054400000[0m [36msymbol[0m=[35mSOLUSDT[0m
+[2m2026-05-20T13:06:49.134272Z[0m [[32m[1minfo     [0m] [1mcompare.loading               [0m [36msymbol[0m=[35mXRPUSDT[0m
+[2m2026-05-20T13:06:49.200660Z[0m [[32m[1minfo     [0m] [1mklines.range_loaded           [0m [36mcached_months[0m=[35m18[0m [36mend_ms[0m=[35m1698624000000[0m [36mmonths[0m=[35m18[0m [36mstart_ms[0m=[35m1652054400000[0m [36msymbol[0m=[35mXRPUSDT[0m
+[2m2026-05-20T13:06:50.662500Z[0m [[32m[1minfo     [0m] [1mcompare.running               [0m [36mparams[0m=[35m{'inner': 'grid', 'inner_anchor_period': 200, 'inner_entry_bps': 50, 'inner_step_bps': 25, 'max_trend_bps': 20}[0m [36msignal[0m=[35mtrend_filter[0m
+====================================================================================================================================================
+COMPARE — BNBUSDT,BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT — 3880800 1m bars total
+====================================================================================================================================================
+signal                        trades   win%       gross      fees         net    roi%       maxDD     dd%   liq   near  minLiq%     open$    open?
+----------------------------------------------------------------------------------------------------------------------------------------------------
+trend_filter(inner=grid,i...     440 100.0%     4807.50   -128.72     4936.22   16.45     3102.19   10.34 False  False     0.00   3771.02        4
+
+Notes:
+  • 'fees' negative = maker rebate. 'net' = gross − fees.
+  • 'liq'/'near' are hard safety gates from the liquidation-risk model.
+  • 'open?' = symbols still in a non-IDLE state at end-of-run.
+    Higher numbers mean more unrealized exposure left over;
+    a winning strategy keeps this near 0.
+  • 'maxDD' is mark-to-market drawdown using candle closes;
+    it is not liquidation modeling.
+  • The merge-at-BEP recovery means trend signals (e.g. ema_crossover)
+    typically lose vs. mean-reversion signals on this architecture.
+
+
+>>> trend_filter(inner=grid,inner_anchor_period=200,inner_entry_bps=50,inner_step_bps=25,max_trend_bps=20)
+====================================================================================================================
+MONTHLY BREAKDOWN
+====================================================================================================================
+period      trades   win%       gross      fees         net    roi%       maxDD     dd%
+--------------------------------------------------------------------------------------------------------------------
+2022-05         88 100.0%     1072.50    -29.30     1101.80    3.67      794.34    2.65
+2022-06          1 100.0%        7.50     -0.30        7.80    0.03     3095.77   10.32
+2022-07          0   0.0%        0.00      0.00        0.00    0.00      954.46    3.18
+2022-08          8 100.0%       82.50     -2.10       84.60    0.28     1282.85    4.28
+2022-09          8 100.0%      135.00     -3.50      138.50    0.46      676.51    2.26
+2022-10          6 100.0%       67.50     -1.79       69.29    0.23      474.34    1.58
+2022-11         88 100.0%      982.50    -26.30     1008.80    3.36     1100.85    3.67
+2022-12         22 100.0%      210.00     -5.69      215.69    0.72      860.04    2.87
+2023-01         26 100.0%      270.00     -6.91      276.91    0.92      445.54    1.49
+2023-02         14 100.0%      135.00     -3.80      138.80    0.46      679.19    2.26
+2023-03         42 100.0%      465.00    -12.42      477.42    1.59      690.17    2.30
+2023-04         21 100.0%      247.50     -6.50      254.00    0.85      369.80    1.23
+2023-05          6 100.0%       52.50     -1.40       53.90    0.18      508.07    1.69
+2023-06         33 100.0%      315.00     -8.30      323.30    1.08      643.11    2.14
+2023-07         19 100.0%      195.00     -5.30      200.30    0.67      755.93    2.52
+2023-08         24 100.0%      255.00     -6.80      261.80    0.87      329.75    1.10
+2023-09         14 100.0%      105.00     -2.80      107.80    0.36      310.11    1.03
+2023-10         20 100.0%      210.00     -5.50      215.50    0.72      346.98    1.16
+--------------------------------------------------------------------------------------------------------------------
+TOTAL          440 100.0%     4807.50   -128.72     4936.22   16.45     3095.77   10.32

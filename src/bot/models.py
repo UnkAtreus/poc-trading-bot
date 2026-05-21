@@ -51,6 +51,9 @@ class Signal:
     symbol: str
     direction: Direction
     timestamp: float
+    size_scale: float = 1.0
+    allow_new_position: bool = True
+    allow_layering: bool = True
 
 
 @dataclass(frozen=True)

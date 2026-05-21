@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import copy
+import csv
 import signal as posix_signal
 import sys
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from bot.logger import configure as configure_logging, get_logger
 from bot.persistence.store import StateStore
 from bot.risk.manager import RiskManager
 from bot.signals.base import build as build_signal
+from bot.signals.labels import signal_full_label, signal_short_label
 
 
 def _parse_iso_to_ms(s: str) -> int:
@@ -57,6 +59,7 @@ async def _load_candles_by_symbol(args, settings, *, log_event: str) -> dict[str
 
 
 async def _cmd_backtest(args, settings) -> int:
+    from bot.backtest.archive import archive_backtest_result
     from bot.backtest.monthly import by_month, render_monthly
     from bot.backtest.report import render
     from bot.backtest.runner import run_backtest
@@ -88,11 +91,33 @@ async def _cmd_backtest(args, settings) -> int:
     result = await run_backtest(
         settings, candles, sig, risk=risk, initial_equity=initial_equity,
         stops=_stop_config_from_args(args),
+        execution=_execution_config_from_args(args),
     )
     print(render(result))
     if args.by_month:
         print()
         print(render_monthly(by_month(result), initial_equity=initial_equity))
+    try:
+        archive_path = archive_backtest_result(
+            kind="cli_backtest",
+            settings=settings,
+            start=args.start,
+            end=args.end,
+            symbols=sorted(candles.keys()),
+            signal_name=sig_name,
+            signal_params=sig_params,
+            initial_equity=initial_equity,
+            result=result,
+            stops=_stop_config_from_args(args),
+            risk_enabled=args.with_risk,
+            args=vars(args),
+            include_events=True,
+        )
+        print()
+        print(f"archive        : {archive_path}")
+    except Exception as exc:
+        print()
+        print(f"archive warning: {type(exc).__name__}: {exc}")
     return 0
 
 
@@ -238,6 +263,245 @@ def _render_compare(rows, candles, *, initial_equity: float = 0.0) -> str:
     lines.append("  • The merge-at-BEP recovery means trend signals (e.g. ema_crossover)")
     lines.append("    typically lose vs. mean-reversion signals on this architecture.")
     return "\n".join(lines)
+
+
+async def _cmd_compare_execution(args, settings) -> int:
+    """Compare naive fills against realistic execution penalties."""
+    from bot.backtest.archive import archive_record, result_summary, settings_snapshot
+    from bot.backtest.runner import run_backtest
+
+    log = get_logger(__name__)
+    _apply_cli_overrides(args, settings)
+    sig_name, sig_params = _single_signal_from_args(args, settings)
+    candles = await _load_candles_by_symbol(args, settings, log_event="compare_execution.loading")
+    if not candles:
+        log.error("compare_execution.no_data")
+        return 1
+
+    initial_equity = _initial_equity_from_args(args, settings)
+    range_days = max((_parse_iso_to_ms(args.end) - _parse_iso_to_ms(args.start)) / 86_400_000.0, 1e-9)
+    from bot.backtest.execution import EXECUTION_PROFILE_LATENCIES
+
+    profile = _execution_profile_from_args(args)
+    latency_spec = args.latencies or EXECUTION_PROFILE_LATENCIES[profile]
+    scenarios = [_execution_config_from_args(args, force_model="naive")]
+    scenarios.extend(
+        _execution_config_from_args(args, force_model="realistic", latency_seconds=latency)
+        for latency in _parse_float_list(latency_spec)
+    )
+
+    rows: list[dict] = []
+    detailed: dict[str, dict] = {}
+    for cfg in scenarios:
+        label = _execution_label(cfg)
+        log.info("compare_execution.running", execution=label)
+        sig = build_signal(sig_name, dict(sig_params))
+        risk = RiskManager(settings=settings, state_dir=Path("data/state")) if args.with_risk else None
+        result = await run_backtest(
+            settings,
+            candles,
+            sig,
+            risk=risk,
+            initial_equity=initial_equity,
+            stops=_stop_config_from_args(args),
+            execution=cfg,
+        )
+        rows.append(_execution_result_row(label, cfg, result, initial_equity, range_days, args))
+        detailed[label] = result_summary(result, initial_equity=initial_equity, include_events=False)
+
+    _add_naive_penalties(rows)
+    csv_path = Path(args.output_csv)
+    report_path = Path(args.output_report)
+    _write_compare_execution_csv(csv_path, rows)
+    report = _render_compare_execution_report(rows, args, settings, csv_path, sig_name, sig_params)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(report, encoding="utf-8")
+
+    try:
+        archive_path = archive_record(
+            {
+                "kind": "compare_execution_models",
+                "label": args.label,
+                "scope": {
+                    "start": args.start,
+                    "end": args.end,
+                    "symbols": sorted(candles.keys()),
+                },
+                "strategy": {
+                    "signal_name": sig_name,
+                    "signal_params": dict(sig_params),
+                    "risk_enabled": args.with_risk,
+                    "stops": _stop_config_from_args(args),
+                },
+                "settings": settings_snapshot(settings),
+                "args": vars(args),
+                "outputs": {"csv_path": str(csv_path), "report_path": str(report_path)},
+                "summary": {
+                    "signal_short": signal_short_label(sig_name, sig_params),
+                    "signal_full": _format_signal_spec(sig_name, sig_params),
+                    "target_min_annual_roi_pct": args.min_annual_roi_pct,
+                    "target_max_annual_roi_pct": args.max_annual_roi_pct,
+                    "rows": rows,
+                },
+                "metrics": _archive_metrics_from_execution_rows(rows, initial_equity),
+                "extra": {"execution_results": detailed},
+            }
+        )
+        print(report)
+        print()
+        print(f"csv            : {csv_path}")
+        print(f"report         : {report_path}")
+        print(f"archive        : {archive_path}")
+    except Exception as exc:
+        print(report)
+        print()
+        print(f"csv            : {csv_path}")
+        print(f"report         : {report_path}")
+        print(f"archive warning: {type(exc).__name__}: {exc}")
+    return 0
+
+
+def _execution_label(cfg) -> str:
+    if cfg.mode == "realistic":
+        return f"realistic_{cfg.latency_seconds:g}s"
+    return "naive"
+
+
+def _execution_result_row(label: str, cfg, result, initial_equity: float, range_days: float, args) -> dict:
+    roi_pct = result.net_pnl / initial_equity * 100.0 if initial_equity > 0 else 0.0
+    annualized_roi_pct = roi_pct * (365.0 / range_days)
+    stats = result.execution_stats
+    return {
+        "label": label,
+        "mode": cfg.mode,
+        "latency_seconds": cfg.latency_seconds,
+        "cancel_delay_seconds": cfg.cancel_delay_seconds,
+        "slippage_bps": cfg.slippage_bps,
+        "pass_through_bps": cfg.pass_through_bps,
+        "full_fill_bps": cfg.full_fill_bps,
+        "min_partial_fill_pct": cfg.min_partial_fill_pct,
+        "trades": len(result.trades),
+        "wins": result.wins,
+        "losses": result.losses,
+        "win_rate_pct": result.win_rate * 100.0,
+        "gross_pnl": result.total_pnl,
+        "fees": result.total_fees,
+        "net_pnl": result.net_pnl,
+        "roi_pct": roi_pct,
+        "annualized_roi_pct": annualized_roi_pct,
+        "target_min_pass": annualized_roi_pct >= args.min_annual_roi_pct,
+        "target_band_pass": args.min_annual_roi_pct <= annualized_roi_pct <= args.max_annual_roi_pct,
+        "max_drawdown": result.max_drawdown,
+        "max_drawdown_pct": result.max_drawdown_pct * 100.0,
+        "liquidated": result.liquidated,
+        "near_liquidation": result.near_liquidation,
+        "final_open_exposure": result.final_open_exposure,
+        "placed_orders": stats.placed_orders,
+        "accepted_orders": stats.accepted_orders,
+        "rejected_orders": stats.rejected_orders,
+        "partial_fills": stats.partial_fills,
+        "full_fills": stats.full_fills,
+        "cancel_requested": stats.cancel_requested,
+        "cancel_effective": stats.cancel_effective,
+        "cancel_race_fills": stats.cancel_race_fills,
+        "dust_rejected": stats.dust_rejected,
+        "slippage_cost": stats.slippage_cost,
+        "penalty_net_pnl_vs_naive": 0.0,
+        "penalty_roi_pct_vs_naive": 0.0,
+    }
+
+
+def _add_naive_penalties(rows: list[dict]) -> None:
+    if not rows:
+        return
+    naive = rows[0]
+    for row in rows:
+        row["penalty_net_pnl_vs_naive"] = row["net_pnl"] - naive["net_pnl"]
+        row["penalty_roi_pct_vs_naive"] = row["roi_pct"] - naive["roi_pct"]
+
+
+def _write_compare_execution_csv(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _render_compare_execution_report(
+    rows: list[dict],
+    args,
+    settings,
+    csv_path: Path,
+    signal_name: str,
+    signal_params: dict,
+) -> str:
+    from bot.backtest.execution import EXECUTION_PROFILE_LATENCIES
+
+    signal_full = _format_signal_spec(signal_name, signal_params)
+    signal_short = signal_short_label(signal_name, signal_params)
+    profile = _execution_profile_from_args(args)
+    latency_spec = args.latencies or EXECUTION_PROFILE_LATENCIES[profile]
+    realistic_cfg = _execution_config_from_args(args, force_model="realistic")
+    lines = [
+        "# Execution Model Comparison",
+        "",
+        f"- Range: `{args.start}` to `{args.end}`",
+        f"- Signal: `{signal_short}`",
+        f"- Full signal: `{signal_full}`",
+        f"- Execution profile: `{profile}`",
+        f"- Realistic latencies: `{latency_spec}` seconds",
+        f"- Realistic penalties: cancel `{realistic_cfg.cancel_delay_seconds:g}`s, "
+        f"slippage `{realistic_cfg.slippage_bps:g}` bps, "
+        f"pass-through `{realistic_cfg.pass_through_bps:g}` bps, "
+        f"full-fill `{realistic_cfg.full_fill_bps:g}` bps, "
+        f"min partial `{realistic_cfg.min_partial_fill_pct:g}`%",
+        f"- Initial equity: `{_initial_equity_from_args(args, settings):,.2f}` USDT",
+        f"- Target: `{args.min_annual_roi_pct:g}-{args.max_annual_roi_pct:g}%` annualized ROI",
+        f"- Raw CSV: `{csv_path}`",
+        "",
+        "| Model | Net PnL | ROI | Annual ROI | Max DD | Trades | Win % | Rejected | Partial | Cancel race | Dust | Slip cost | Vs naive | Target >= min |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row['label']} | {row['net_pnl']:,.2f} | {row['roi_pct']:.2f}% | "
+            f"{row['annualized_roi_pct']:.2f}% | {row['max_drawdown_pct']:.2f}% | "
+            f"{int(row['trades'])} | {row['win_rate_pct']:.2f}% | "
+            f"{int(row['rejected_orders'])} | {int(row['partial_fills'])} | "
+            f"{int(row['cancel_race_fills'])} | {int(row['dust_rejected'])} | "
+            f"{row['slippage_cost']:,.4f} | {row['penalty_roi_pct_vs_naive']:+.2f}% | "
+            f"{'yes' if row['target_min_pass'] else 'no'} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Read",
+            "",
+            "- Realistic rows are candle-only execution proxies, not order-book replay.",
+            "- If realistic rows lose most of naive PnL, the old backtest was likely execution-sensitive.",
+            "- A strategy is interesting only if realistic rows still clear the target with acceptable drawdown and low dust/rejection counts.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _archive_metrics_from_execution_rows(rows: list[dict], initial_equity: float) -> dict:
+    realistic = [row for row in rows if row["mode"] == "realistic"]
+    chosen = min(realistic or rows, key=lambda row: row["annualized_roi_pct"])
+    return {
+        "initial_equity": initial_equity,
+        "trades": chosen["trades"],
+        "win_rate_pct": chosen["win_rate_pct"],
+        "net_pnl": chosen["net_pnl"],
+        "roi_pct": chosen["roi_pct"],
+        "max_drawdown_pct": chosen["max_drawdown_pct"],
+        "liquidated": chosen["liquidated"],
+        "near_liquidation": chosen["near_liquidation"],
+        "final_open_exposure": chosen["final_open_exposure"],
+        "annualized_roi_pct": chosen["annualized_roi_pct"],
+        "target_min_pass": chosen["target_min_pass"],
+    }
 
 
 async def _cmd_classify_market(args, settings) -> int:
@@ -425,6 +689,10 @@ def _single_signal_from_args(args, settings) -> tuple[str, dict]:
     return settings.bot.signal.engine, dict(settings.bot.signal.params)
 
 
+def _format_signal_spec(name: str, params: dict) -> str:
+    return signal_full_label(name, params)
+
+
 def _parse_float_list(raw: str) -> list[float]:
     vals = [float(x.strip()) for x in raw.split(",") if x.strip()]
     if not vals:
@@ -593,6 +861,59 @@ def _stop_config_from_args(args):
     return cfg
 
 
+def _execution_config_from_args(args, *, force_model: str | None = None, latency_seconds: float | None = None):
+    from bot.backtest.execution import BacktestExecutionConfig
+
+    model = force_model or getattr(args, "execution_model", "naive")
+    if model == "naive":
+        return BacktestExecutionConfig.naive()
+    if model != "realistic":
+        raise SystemExit(f"bad execution model: {model}")
+    profile = _execution_profile_from_args(args)
+    return BacktestExecutionConfig.from_profile(
+        profile,
+        latency_seconds=latency_seconds
+        if latency_seconds is not None
+        else getattr(args, "latency_seconds", None),
+        cancel_delay_seconds=getattr(args, "cancel_delay_seconds", None),
+        slippage_bps=getattr(args, "slippage_bps", None),
+        pass_through_bps=getattr(args, "pass_through_bps", None),
+        full_fill_bps=getattr(args, "full_fill_bps", None),
+        min_partial_fill_pct=getattr(args, "min_partial_fill_pct", None),
+    )
+
+
+def _execution_profile_from_args(args) -> str:
+    profile = getattr(args, "execution_profile", "conservative") or "conservative"
+    if profile not in {"conservative", "mainnet-like"}:
+        raise SystemExit(f"bad execution profile: {profile}")
+    return profile
+
+
+def _add_execution_args(parser: argparse.ArgumentParser, *, include_model: bool = True) -> None:
+    if include_model:
+        parser.add_argument(
+            "--execution-model",
+            choices=("naive", "realistic"),
+            default="naive",
+            help="Backtest execution model; naive preserves the legacy fill rules",
+        )
+    parser.add_argument("--execution-profile", choices=("conservative", "mainnet-like"), default="conservative",
+                        help="Default realistic execution penalties; manual flags override this profile")
+    parser.add_argument("--latency-seconds", type=float, default=None,
+                        help="Override realistic order activation latency")
+    parser.add_argument("--cancel-delay-seconds", type=float, default=None,
+                        help="Override realistic cancel acknowledgement delay")
+    parser.add_argument("--slippage-bps", type=float, default=None,
+                        help="Override realistic adverse fill-price penalty")
+    parser.add_argument("--pass-through-bps", type=float, default=None,
+                        help="Override realistic minimum price pass-through required to fill")
+    parser.add_argument("--full-fill-bps", type=float, default=None,
+                        help="Override realistic pass-through required for a full fill")
+    parser.add_argument("--min-partial-fill-pct", type=float, default=None,
+                        help="Override realistic minimum partial fill percentage")
+
+
 async def _cmd_run(args, settings) -> int:
     """Live run against testnet or mainnet."""
     from bot.exchange.bybit_live import BybitLive
@@ -629,6 +950,11 @@ async def _cmd_run(args, settings) -> int:
 
 def cli() -> int:
     parser = argparse.ArgumentParser(prog="trading-bot")
+    parser.add_argument(
+        "--config-dir",
+        default="config",
+        help="Directory containing bot.yaml and symbols.yaml",
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_bt = sub.add_parser("backtest", help="Run a backtest on historical klines")
@@ -667,6 +993,7 @@ def cli() -> int:
                       help="Backtest lock new entries for the rest of a UTC month after this realized ROI percent")
     p_bt.add_argument("--stop-monthly-dd-pct", type=float, default=None,
                       help="Backtest force close and lock new entries for the rest of a UTC month after this DD percent")
+    _add_execution_args(p_bt)
 
     p_cmp = sub.add_parser("compare", help="Run several signals on same data, side-by-side")
     p_cmp.add_argument("--start", required=True, help="UTC date YYYY-MM-DD or ISO")
@@ -708,6 +1035,52 @@ def cli() -> int:
                        help="Backtest lock new entries for the rest of a UTC month after this realized ROI percent")
     p_cmp.add_argument("--stop-monthly-dd-pct", type=float, default=None,
                        help="Backtest force close and lock new entries for the rest of a UTC month after this DD percent")
+
+    p_ce = sub.add_parser("compare-execution", help="Compare naive vs realistic execution backtests")
+    p_ce.add_argument("--start", required=True, help="UTC date YYYY-MM-DD or ISO")
+    p_ce.add_argument("--end", required=True, help="UTC date YYYY-MM-DD or ISO")
+    p_ce.add_argument("--symbols", default="", help="Comma-separated; defaults to symbols.yaml")
+    p_ce.add_argument("--signal", default="", help="Override signal: name[:k=v[:k=v]]")
+    p_ce.add_argument("--with-risk", action="store_true",
+                      help="Apply RiskManager caps during the backtest")
+    p_ce.add_argument("--kline-workers", type=int, default=4,
+                      help="Concurrent symbol kline loads/fetches")
+    p_ce.add_argument("--tp-offset-bps", type=float, default=None,
+                      help="Override TP offset in basis points")
+    p_ce.add_argument("--initial-equity", type=float, default=None,
+                      help="Initial equity used for ROI and drawdown percentages; defaults to account.initial_equity")
+    p_ce.add_argument("--margin-usd", type=float, default=None,
+                      help="Override margin per entry order in USDT")
+    p_ce.add_argument("--leverage", type=int, default=None,
+                      help="Override leverage")
+    p_ce.add_argument("--max-notional-account", type=float, default=None,
+                      help="Override account-wide risk notional cap in USDT")
+    p_ce.add_argument("--max-notional-per-symbol", type=float, default=None,
+                      help="Override per-symbol risk notional cap in USDT")
+    p_ce.add_argument("--daily-loss-limit", type=float, default=None,
+                      help="Override daily loss limit in USDT")
+    p_ce.add_argument("--stop-bep-bps", type=float, default=None,
+                      help="Backtest forced close when price moves this many bps from BEP")
+    p_ce.add_argument("--stop-symbol-loss", type=float, default=None,
+                      help="Backtest forced close when a symbol's unrealized loss reaches this USDT amount")
+    p_ce.add_argument("--stop-account-dd-pct", type=float, default=None,
+                      help="Backtest force close all positions and halt new entries at this account DD percent")
+    p_ce.add_argument("--stop-max-hold-hours", type=float, default=None,
+                      help="Backtest forced close when a symbol has been open this many hours")
+    p_ce.add_argument("--stop-monthly-profit-lock-pct", type=float, default=None,
+                      help="Backtest lock new entries for the rest of a UTC month after this realized ROI percent")
+    p_ce.add_argument("--stop-monthly-dd-pct", type=float, default=None,
+                      help="Backtest force close and lock new entries for the rest of a UTC month after this DD percent")
+    p_ce.add_argument("--latencies", default=None,
+                      help="Comma-separated realistic execution latencies; defaults to execution profile")
+    p_ce.add_argument("--min-annual-roi-pct", type=float, default=12.0,
+                      help="Minimum annualized ROI target")
+    p_ce.add_argument("--max-annual-roi-pct", type=float, default=30.0,
+                      help="Upper annualized ROI target band")
+    p_ce.add_argument("--output-csv", default="logs/compare_execution_models.csv")
+    p_ce.add_argument("--output-report", default="reports/compare_execution_models.md")
+    p_ce.add_argument("--label", default="")
+    _add_execution_args(p_ce, include_model=False)
 
     p_stress = sub.add_parser("stress", help="Run historical plus synthetic liquidation stress tests")
     p_stress.add_argument("--start", required=True, help="UTC date YYYY-MM-DD or ISO")
@@ -813,7 +1186,7 @@ def cli() -> int:
     p_run = sub.add_parser("run", help="Run live (mode picked from .env)")
 
     args = parser.parse_args()
-    settings = load_settings()
+    settings = load_settings(config_dir=args.config_dir)
     configure_logging(settings.env.log_level)
     log = get_logger(__name__)
     log.info(
@@ -827,6 +1200,8 @@ def cli() -> int:
         return asyncio.run(_cmd_backtest(args, settings))
     if args.cmd == "compare":
         return asyncio.run(_cmd_compare(args, settings))
+    if args.cmd == "compare-execution":
+        return asyncio.run(_cmd_compare_execution(args, settings))
     if args.cmd == "stress":
         return asyncio.run(_cmd_stress(args, settings))
     if args.cmd == "optimize-lot-size":

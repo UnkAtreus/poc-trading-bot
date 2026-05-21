@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -15,6 +17,7 @@ from bot.dashboard.service import DashboardService
 
 security = HTTPBasic()
 PACKAGE_DIR = Path(__file__).parent
+BANGKOK_TZ = ZoneInfo("Asia/Bangkok")
 
 
 def create_app(root: Path | str = ".") -> FastAPI:
@@ -25,6 +28,9 @@ def create_app(root: Path | str = ".") -> FastAPI:
     static_dir = PACKAGE_DIR / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
     templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
+    templates.env.filters["bangkok_dt"] = _bangkok_dt
+    templates.env.filters["bangkok_date"] = _bangkok_date
+    templates.env.filters["bangkok_time"] = _bangkok_time
 
     def static_url(path: str) -> str:
         rel = path.lstrip("/")
@@ -64,7 +70,7 @@ def create_app(root: Path | str = ".") -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request, _: str = Depends(require_auth)):
-        return render(request, "overview.html", {})
+        return render(request, "overview.html", {"summary": service.overview_summary()})
 
     @app.get("/trading", response_class=HTMLResponse)
     def trading(request: Request, _: str = Depends(require_auth)):
@@ -72,7 +78,7 @@ def create_app(root: Path | str = ".") -> FastAPI:
         return render(
             request,
             "trading.html",
-            {"states": service.local_states(), "overview": overview},
+            {"states": service.profile_local_states(), "overview": overview},
         )
 
     @app.get("/api/trading-overview")
@@ -81,7 +87,14 @@ def create_app(root: Path | str = ".") -> FastAPI:
 
     @app.get("/settings", response_class=HTMLResponse)
     def settings(request: Request, _: str = Depends(require_auth)):
-        return render(request, "settings.html", {})
+        return render(
+            request,
+            "settings.html",
+            {
+                "alerting": service.load_alerting().model_dump(),
+                "secrets_masked": service.alert_secrets_masked(),
+            },
+        )
 
     @app.get("/alerts", response_class=HTMLResponse)
     def alerts(request: Request, _: str = Depends(require_auth)):
@@ -128,6 +141,41 @@ def create_app(root: Path | str = ".") -> FastAPI:
             },
         )
 
+    @app.get("/analysis", response_class=HTMLResponse)
+    def analysis(request: Request, _: str = Depends(require_auth)):
+        data = service.backtest_analysis()
+        return render(
+            request,
+            "analysis.html",
+            {
+                "analysis": data,
+                "signals": service.available_signals(),
+            },
+        )
+
+    @app.get("/api/backtest-analysis")
+    def api_backtest_analysis(
+        strategies: str = "",
+        symbols: str = "",
+        start: str = "",
+        end: str = "",
+        min_trades: int = 0,
+        min_win_rate_pct: float = 0.0,
+        hide_zero_trades: bool = True,
+        _: str = Depends(require_auth),
+    ):
+        strategy_list = [s.strip() for s in strategies.split(",") if s.strip()]
+        symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+        return service.backtest_analysis(
+            strategies=strategy_list or None,
+            symbols=symbol_list or None,
+            start=start or None,
+            end=end or None,
+            min_trades=max(0, min_trades),
+            min_win_rate_pct=max(0.0, min_win_rate_pct),
+            hide_zero_trades=hide_zero_trades,
+        )
+
     @app.get("/balance", response_class=HTMLResponse)
     def balance(request: Request, _: str = Depends(require_auth)):
         return render(
@@ -172,7 +220,7 @@ def create_app(root: Path | str = ".") -> FastAPI:
             service.save_alerting_values(locals())
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        return RedirectResponse("/alerting", status_code=303)
+        return RedirectResponse("/settings#alerting", status_code=303)
 
     @app.post("/alerting/secrets/save")
     def alerting_secrets_save(
@@ -185,7 +233,7 @@ def create_app(root: Path | str = ".") -> FastAPI:
         if confirm != "SAVE":
             raise HTTPException(status_code=400, detail="type SAVE to confirm")
         service.save_alert_secrets_values(locals())
-        return RedirectResponse("/alerting", status_code=303)
+        return RedirectResponse("/settings#alerting", status_code=303)
 
     @app.post("/alerting/test")
     def alerting_test(
@@ -261,6 +309,18 @@ def create_app(root: Path | str = ".") -> FastAPI:
         service.regenerate_ai_context()
         return RedirectResponse("/alerts", status_code=303)
 
+    @app.post("/actions/restart-bot")
+    def action_restart_bot(
+        confirm: Annotated[str, Form()],
+        tmux_session: Annotated[str, Form()] = "testnet_dry_run",
+        _: str = Depends(require_auth),
+    ):
+        try:
+            service.restart_bot(tmux_session=tmux_session, confirm=confirm)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return RedirectResponse("/", status_code=303)
+
     @app.post("/settings/preview")
     def settings_preview(
         margin_usd: Annotated[str, Form()],
@@ -310,6 +370,12 @@ def create_app(root: Path | str = ".") -> FastAPI:
             "signal_params": form.get("signal_params", ""),
             "signal": form.get("signal", ""),
             "symbols_picked": form.getlist("symbols_picked"),
+            "margin_usd": form.get("margin_usd", ""),
+            "leverage": form.get("leverage", ""),
+            "max_notional_account": form.get("max_notional_account", ""),
+            "max_notional_per_symbol": form.get("max_notional_per_symbol", ""),
+            "tp_offset_bps": form.get("tp_offset_bps", ""),
+            "daily_loss_limit": form.get("daily_loss_limit", ""),
         }
         try:
             result = service.start_backtest(form_values)
@@ -330,6 +396,49 @@ def create_app(root: Path | str = ".") -> FastAPI:
         return Response(status_code=204)
 
     return app
+
+
+def _parse_datetime(value) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        timestamp = float(value)
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000.0
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _bangkok_dt(value, fallback: str = "") -> str:
+    dt = _parse_datetime(value)
+    if dt is None:
+        return fallback if value in (None, "") else str(value)
+    local = dt.astimezone(BANGKOK_TZ)
+    return f"{local.strftime('%b')} {local.day}, {local.year} {local.strftime('%H:%M:%S')} ICT"
+
+
+def _bangkok_date(value, fallback: str = "") -> str:
+    dt = _parse_datetime(value)
+    if dt is None:
+        return fallback if value in (None, "") else str(value)
+    local = dt.astimezone(BANGKOK_TZ)
+    return f"{local.strftime('%b')} {local.day}, {local.year}"
+
+
+def _bangkok_time(value, fallback: str = "") -> str:
+    dt = _parse_datetime(value)
+    if dt is None:
+        return fallback if value in (None, "") else str(value)
+    return f"{dt.astimezone(BANGKOK_TZ).strftime('%H:%M:%S')} ICT"
 
 
 app = create_app()

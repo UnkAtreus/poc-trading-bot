@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from bot.models import Direction, OrderPurpose
+from bot.models import Direction, OrderPurpose, Side
 from bot.strategy import state_machine as sm
 from bot.strategy.state_machine import (
     CancelAllTPs,
@@ -69,6 +69,32 @@ def test_idle_long_signal_places_entry_below_close():
     assert d.ctx.pending_entry_link_id == a.link_id
 
 
+def test_idle_signal_size_scale_reduces_entry_qty():
+    c = ctx()
+    ev = CandleClose(
+        timestamp=1000.0,
+        close_price=100.0,
+        signal_direction=Direction.LONG,
+        notional_scale=0.25,
+    )
+    d = sm.step(c, ev, PARAMS)
+    a = d.actions[0]
+    assert math.isclose(a.qty, (200.0 * 0.25) / 99.95, rel_tol=1e-9)
+
+
+def test_idle_signal_can_block_new_position():
+    c = ctx()
+    ev = CandleClose(
+        timestamp=1000.0,
+        close_price=100.0,
+        signal_direction=Direction.LONG,
+        allow_new_position=False,
+    )
+    d = sm.step(c, ev, PARAMS)
+    assert d.ctx.state is State.IDLE
+    assert d.actions == ()
+
+
 def test_idle_short_signal_places_entry_above_close():
     c = ctx()
     ev = CandleClose(timestamp=1000.0, close_price=100.0, signal_direction=Direction.SHORT)
@@ -92,6 +118,15 @@ def test_idle_ignores_stray_fill():
     d = sm.step(c, EntryFilled("x", 1.0, 100.0, 1000.0), PARAMS)
     assert d.ctx.state is State.IDLE
     assert d.actions == ()
+
+
+def test_idle_entry_fill_with_side_opens_position_and_places_tp():
+    c = ctx()
+    d = sm.step(c, EntryFilled("late", 1.0, 100.0, 1000.0, side=Side.BUY), PARAMS)
+    assert d.ctx.state is State.IN_POSITION_TP_PENDING
+    assert d.ctx.direction is Direction.LONG
+    assert d.ctx.position_size == 1.0
+    assert _types(d.actions) == [PlaceTP, StartMergeTimer]
 
 
 # ---------- ENTRY_PENDING ----------
@@ -161,6 +196,15 @@ def test_tp_filled_returns_to_idle_and_clears_timer():
     assert _types(d.actions) == [ClearMergeTimer]
 
 
+def test_partial_tp_fill_reduces_size_without_clearing_timer():
+    c = _in_pos(size=2.0)
+    d = sm.step(c, TPFilled("TP1", 0.75, 100.1, 1500.0), PARAMS)
+    assert d.ctx.state is State.IN_POSITION_TP_PENDING
+    assert d.ctx.position_size == 1.25
+    assert d.ctx.bep == 100.0
+    assert d.actions == ()
+
+
 def test_in_position_layered_signal_places_new_entry():
     c = _in_pos()
     ev = CandleClose(timestamp=1100.0, close_price=99.0, signal_direction=Direction.LONG)
@@ -170,6 +214,30 @@ def test_in_position_layered_signal_places_new_entry():
     assert d.ctx.position_size == 1.0  # unchanged until fill
     assert d.ctx.pending_entry_link_id is not None
     assert _types(d.actions) == [PlaceEntry]
+
+
+def test_in_position_block_new_still_allows_layering():
+    c = _in_pos()
+    ev = CandleClose(
+        timestamp=1100.0,
+        close_price=99.0,
+        signal_direction=Direction.LONG,
+        allow_new_position=False,
+    )
+    d = sm.step(c, ev, PARAMS)
+    assert _types(d.actions) == [PlaceEntry]
+
+
+def test_in_position_signal_can_block_layering():
+    c = _in_pos()
+    ev = CandleClose(
+        timestamp=1100.0,
+        close_price=99.0,
+        signal_direction=Direction.LONG,
+        allow_layering=False,
+    )
+    d = sm.step(c, ev, PARAMS)
+    assert d.actions == ()
 
 
 def test_in_position_unfilled_layered_entry_cancelled_on_next_candle():
@@ -234,6 +302,24 @@ def test_in_position_merge_timer_expired_cancels_and_places_merge():
     assert math.isclose(merge.price, 99.0 * 1.001, rel_tol=1e-9)
 
 
+def test_in_position_tp_rejection_below_min_notional_flips_to_dust_stranded():
+    c = _in_pos(size=0.1, bep=1.5047)
+    reason = "notional_below_min(0.14896 < 5)"
+    d = sm.step(c, OrderRejected("TP1", OrderPurpose.TP, 2900.0, reason=reason), PARAMS)
+    assert d.ctx.state is State.DUST_STRANDED
+    assert d.actions == ()
+    assert d.ctx.position_size == 0.1
+    assert math.isclose(d.ctx.bep, 1.5047, rel_tol=1e-9)
+
+
+def test_in_position_tp_rejection_bybit_110017_flips_to_dust_stranded():
+    c = _in_pos(size=5.4, bep=89.97)
+    reason = "orderQty will be truncated to zero. (ErrCode: 110017)"
+    d = sm.step(c, OrderRejected("TP1", OrderPurpose.TP, 2900.0, reason=reason), PARAMS)
+    assert d.ctx.state is State.DUST_STRANDED
+    assert d.actions == ()
+
+
 # ---------- MERGE_PENDING ----------
 
 def _merge(size=2.0, bep=99.0) -> Context:
@@ -251,6 +337,14 @@ def test_merge_filled_returns_to_idle():
     d = sm.step(c, TPFilled("M1", 2.0, 99.099, 3000.0), PARAMS)
     assert d.ctx.state is State.IDLE
     assert _types(d.actions) == [ClearMergeTimer]
+
+
+def test_partial_merge_fill_stays_merge_pending():
+    c = _merge(size=2.0)
+    d = sm.step(c, TPFilled("M1", 0.5, 99.099, 3000.0), PARAMS)
+    assert d.ctx.state is State.MERGE_PENDING
+    assert d.ctx.position_size == 1.5
+    assert d.actions == ()
 
 
 def test_merge_pending_layered_fill_remerges():
@@ -275,6 +369,85 @@ def test_merge_rejected_retries():
     d = sm.step(c, OrderRejected("M1", OrderPurpose.MERGE, 2900.0), PARAMS)
     assert d.ctx.state is State.MERGE_PENDING
     assert _types(d.actions) == [PlaceMergeTP]
+
+
+def test_merge_rejection_with_notional_below_min_flips_to_dust_stranded():
+    c = _merge(size=0.1, bep=1.5047)
+    reason = "notional_below_min(0.14896 < 5)"
+    d = sm.step(c, OrderRejected("M1", OrderPurpose.MERGE, 2900.0, reason=reason), PARAMS)
+    assert d.ctx.state is State.DUST_STRANDED
+    assert d.actions == ()
+    # Position remains intact so the operator can close it manually.
+    assert d.ctx.position_size == 0.1
+    assert math.isclose(d.ctx.bep, 1.5047, rel_tol=1e-9)
+
+
+def test_merge_rejection_with_qty_below_min_also_flips_to_dust_stranded():
+    c = _merge(size=0.001, bep=1.5)
+    d = sm.step(
+        c,
+        OrderRejected("M1", OrderPurpose.MERGE, 2900.0, reason="qty_below_min(0.001 < 0.01)"),
+        PARAMS,
+    )
+    assert d.ctx.state is State.DUST_STRANDED
+
+
+# ---------- DUST_STRANDED ----------
+
+def _dust(size=0.1, bep=1.5047) -> Context:
+    return ctx(
+        state=State.DUST_STRANDED,
+        direction=Direction.SHORT,
+        position_size=size,
+        bep=bep,
+        first_fill_ts=1000.0,
+    )
+
+
+def test_dust_stranded_ignores_candle_close():
+    c = _dust()
+    ev = CandleClose(timestamp=3000.0, close_price=1.5, signal_direction=Direction.SHORT)
+    d = sm.step(c, ev, PARAMS)
+    assert d.ctx.state is State.DUST_STRANDED
+    assert d.actions == ()
+
+
+def test_dust_stranded_ignores_merge_timer_and_rejections():
+    c = _dust()
+    d1 = sm.step(c, MergeTimerExpired(timestamp=3000.0), PARAMS)
+    assert d1.ctx.state is State.DUST_STRANDED
+    assert d1.actions == ()
+    d2 = sm.step(c, OrderRejected("M2", OrderPurpose.MERGE, 3000.0, reason="anything"), PARAMS)
+    assert d2.ctx.state is State.DUST_STRANDED
+    assert d2.actions == ()
+
+
+def test_dust_stranded_manual_close_via_tp_fill_returns_to_idle():
+    c = _dust()
+    d = sm.step(c, TPFilled("M1", 0.1, 1.5, 3500.0), PARAMS)
+    assert d.ctx.state is State.IDLE
+    assert d.ctx.position_size == 0.0
+    assert _types(d.actions) == [ClearMergeTimer]
+
+
+def test_dust_stranded_partial_manual_close_keeps_dust_state():
+    c = _dust(size=0.1)
+    d = sm.step(c, TPFilled("M1", 0.04, 1.5, 3500.0), PARAMS)
+    assert d.ctx.state is State.DUST_STRANDED
+    assert d.ctx.position_size == pytest.approx(0.06)
+    assert d.actions == ()
+
+
+def test_dust_stranded_layered_fill_recovers_to_merge_pending():
+    # An EntryFilled large enough to push the position above min notional
+    # should re-arm the merge with a fresh PlaceMergeTP at the new BEP.
+    c = _dust(size=0.1, bep=1.5047)
+    d = sm.step(c, EntryFilled("L9", 10.0, 1.49, 3600.0), PARAMS)
+    assert d.ctx.state is State.MERGE_PENDING
+    assert d.ctx.position_size == 10.1
+    expected_bep = (1.5047 * 0.1 + 1.49 * 10.0) / 10.1
+    assert math.isclose(d.ctx.bep, expected_bep, rel_tol=1e-9)
+    assert _types(d.actions) == [CancelAllTPs, PlaceMergeTP]
 
 
 # ---------- Risk halt ----------

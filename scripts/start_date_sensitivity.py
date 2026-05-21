@@ -4,12 +4,13 @@ import argparse
 import asyncio
 import copy
 import csv
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from bot.backtest.archive import archive_record, settings_snapshot
 from bot.backtest.downloader import df_to_candles, load_or_fetch
-from bot.backtest.runner import run_backtest
+from bot.backtest.runner import BacktestStopConfig, run_backtest
 from bot.backtest.stability import StabilityGates, analyze_stability
 from bot.config import load_settings
 from bot.logger import configure as configure_logging
@@ -63,6 +64,64 @@ def _even_start_dates(start: datetime, latest_start: datetime, count: int) -> li
         start + timedelta(seconds=round(span_seconds * i / (count - 1)))
         for i in range(count)
     ]
+
+
+def _coerce(value: str) -> int | float | bool | str:
+    for caster in (int, float):
+        try:
+            return caster(value)
+        except ValueError:
+            pass
+    if value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    return value
+
+
+def _parse_signal_spec(spec: str, settings) -> tuple[str, dict]:
+    if not spec:
+        return settings.bot.signal.engine, dict(settings.bot.signal.params)
+    parts = [part for part in spec.split(":") if part]
+    if not parts:
+        return settings.bot.signal.engine, dict(settings.bot.signal.params)
+    params = {}
+    for kv in parts[1:]:
+        if "=" not in kv:
+            raise SystemExit(f"bad signal param '{kv}' in '{spec}': expected k=v")
+        key, value = kv.split("=", 1)
+        params[key.strip()] = _coerce(value.strip())
+    return parts[0], params
+
+
+def _stop_config_from_args(args: argparse.Namespace) -> BacktestStopConfig | None:
+    max_hold_seconds = None
+    if args.stop_max_hold_hours is not None:
+        max_hold_seconds = args.stop_max_hold_hours * 3600.0
+    cfg = BacktestStopConfig(
+        bep_stop_bps=args.stop_bep_bps,
+        max_symbol_loss_usd=args.stop_symbol_loss,
+        account_dd_stop_pct=args.stop_account_dd_pct,
+        max_hold_seconds=max_hold_seconds,
+        monthly_profit_lock_pct=args.stop_monthly_profit_lock_pct,
+        monthly_dd_stop_pct=args.stop_monthly_dd_pct,
+    )
+    if all(value is None for value in cfg.__dict__.values()):
+        return None
+    return cfg
+
+
+def _apply_overrides(settings, args: argparse.Namespace):
+    scenario = copy.deepcopy(settings)
+    if args.margin_usd is not None:
+        scenario.bot.sizing.margin_usd = args.margin_usd
+    if args.leverage is not None:
+        scenario.bot.sizing.leverage = args.leverage
+    if args.account_cap is not None:
+        scenario.bot.risk.max_notional_account_usd = args.account_cap
+    if args.symbol_cap is not None:
+        scenario.bot.risk.max_notional_per_symbol_usd = args.symbol_cap
+    if args.tp_offset_bps is not None:
+        scenario.bot.offsets.tp_offset_bps = args.tp_offset_bps
+    return scenario
 
 
 async def _load_full_candles(
@@ -122,6 +181,12 @@ async def main() -> int:
     parser.add_argument("--end", default="2026-05-09")
     parser.add_argument("--count", type=int, default=500)
     parser.add_argument("--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,BNBUSDT,LTCUSDT")
+    parser.add_argument("--signal", default="")
+    parser.add_argument("--margin-usd", type=float, default=None)
+    parser.add_argument("--leverage", type=int, default=None)
+    parser.add_argument("--account-cap", type=float, default=None)
+    parser.add_argument("--symbol-cap", type=float, default=None)
+    parser.add_argument("--tp-offset-bps", type=float, default=None)
     parser.add_argument("--initial-equity", type=float, default=30_000.0)
     parser.add_argument("--kline-workers", type=int, default=4)
     parser.add_argument("--target-monthly-roi-pct", type=float, default=0.5)
@@ -131,12 +196,21 @@ async def main() -> int:
     parser.add_argument("--max-worst-monthly-dd-pct", type=float, default=10.0)
     parser.add_argument("--max-drawdown-pct", type=float, default=25.0)
     parser.add_argument("--max-open-exposure", type=float, default=5_000.0)
+    parser.add_argument("--stop-bep-bps", type=float, default=None)
+    parser.add_argument("--stop-symbol-loss", type=float, default=None)
+    parser.add_argument("--stop-account-dd-pct", type=float, default=None)
+    parser.add_argument("--stop-max-hold-hours", type=float, default=None)
+    parser.add_argument("--stop-monthly-profit-lock-pct", type=float, default=None)
+    parser.add_argument("--stop-monthly-dd-pct", type=float, default=None)
     parser.add_argument("--output-csv", default="logs/start_date_sensitivity_500_core6.csv")
     parser.add_argument("--output-report", default="reports/start_date_sensitivity_500_core6.md")
     args = parser.parse_args()
 
     configure_logging("WARNING")
     settings = load_settings()
+    scenario_settings = _apply_overrides(settings, args)
+    signal_name, signal_params = _parse_signal_spec(args.signal, scenario_settings)
+    stops = _stop_config_from_args(args)
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
     earliest = _parse_day(args.earliest_start)
     latest = _parse_day(args.latest_start)
@@ -161,10 +235,9 @@ async def main() -> int:
         sliced = _slice_from(full_candles, start.timestamp())
         bars = sum(len(v) for v in sliced.values())
         print(f"[{idx}/{len(starts)}] {start_day} bars={bars}", flush=True)
-        scenario_settings = copy.deepcopy(settings)
         signal = build_signal(
-            scenario_settings.bot.signal.engine,
-            dict(scenario_settings.bot.signal.params),
+            signal_name,
+            dict(signal_params),
         )
         risk = RiskManager(settings=scenario_settings, state_dir=Path("data/state"))
         result = await run_backtest(
@@ -173,6 +246,7 @@ async def main() -> int:
             signal,
             risk=risk,
             initial_equity=args.initial_equity,
+            stops=stops,
         )
         stability = analyze_stability(result, gates=gates, initial_equity=args.initial_equity)
         rows.append(RunRow(
@@ -222,7 +296,70 @@ async def main() -> int:
     report_path.write_text(_render_report(rows, args, csv_path), encoding="utf-8")
     print(f"wrote {csv_path}")
     print(f"wrote {report_path}")
+    _archive_sensitivity_run(
+        args=args,
+        settings=scenario_settings,
+        rows=rows,
+        csv_path=csv_path,
+        report_path=report_path,
+        signal_name=signal_name,
+        signal_params=signal_params,
+        stops=stops,
+        gates=gates,
+        symbols=symbols,
+    )
     return 0
+
+
+def _archive_sensitivity_run(
+    *,
+    args,
+    settings,
+    rows: list[RunRow],
+    csv_path: Path,
+    report_path: Path,
+    signal_name: str,
+    signal_params: dict,
+    stops: BacktestStopConfig | None,
+    gates: StabilityGates,
+    symbols: list[str],
+) -> None:
+    passed = [row for row in rows if row.launch_pass]
+    best = max(rows, key=lambda row: row.stability_score) if rows else None
+    try:
+        archive_path = archive_record({
+            "kind": "start_date_sensitivity",
+            "label": f"{args.earliest_start}_to_{args.latest_start}_end_{args.end}",
+            "scope": {
+                "start": args.earliest_start,
+                "latest_start": args.latest_start,
+                "end": args.end,
+                "symbols": symbols,
+            },
+            "strategy": {
+                "signal_name": signal_name,
+                "signal_params": signal_params,
+                "risk_enabled": True,
+                "stops": stops,
+                "gates": gates,
+            },
+            "settings": settings_snapshot(settings),
+            "args": vars(args),
+            "outputs": {"csv_path": str(csv_path), "report_path": str(report_path)},
+            "summary": {
+                "count": len(rows),
+                "launch_pass_count": len(passed),
+                "launch_pass_pct": len(passed) / len(rows) * 100.0 if rows else 0.0,
+                "best_start": best.start if best else "",
+                "best_stability_score": best.stability_score if best else 0.0,
+                "best_roi_pct": best.roi_pct if best else 0.0,
+                "worst_max_dd_pct": max((row.max_dd_pct for row in rows), default=0.0),
+            },
+            "rows": [asdict(row) for row in rows],
+        })
+        print(f"archived {archive_path}")
+    except Exception as exc:
+        print(f"archive warning: {type(exc).__name__}: {exc}", flush=True)
 
 
 def _render_report(rows: list[RunRow], args, csv_path: Path) -> str:

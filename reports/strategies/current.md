@@ -1,29 +1,28 @@
 # Current Strategy
 
-Selected: 2026-05-02
+Selected: 2026-05-20
 
-Use **v1** while the carryover drawdown problem is unresolved.
+Use **grid50_best** as the current default strategy.
 
 ## Active Config
 
-- Signal: `trend_filter(inner=grid,inner_anchor_period=200,inner_entry_bps=30,inner_step_bps=15,max_trend_bps=30)`
-- Symbols: BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, BNBUSDT, LTCUSDT, HYPEUSDT, XAUTUSDT
+- Signal: `trend_filter(inner=grid,inner_anchor_period=200,inner_entry_bps=50,inner_step_bps=25,max_trend_bps=20)`
+- Symbols: BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, BNBUSDT, LTCUSDT
 - Excluded: ASTERUSDT
-- TP: 100 bps
-- Margin/order: 66 USDT
+- TP: 75 bps
+- Margin/order: 100 USDT
 - Leverage: 10x
-- Notional/order: 660 USDT
-- Risk caps: max_notional_account=50,000, max_notional_per_symbol=10,000, daily_loss_limit=5,000
+- Notional/order: 1,000 USDT
+- Risk caps: max_notional_account=12,500, max_notional_per_symbol=4,000, daily_loss_limit=5,000
 
 ## Decision
 
-Use v1 as the current selected option. Do not use `hold24` or other forced
-stop-loss variants for the current setup.
+Use `grid50_best` as the current selected option. Conservative execution did
+not clear the 12% annual target, but the mainnet-like execution profile did.
 
-Reason: fresh continuous confirmation shows v1 has much lower carryover DD than
-v3, even though profit is lower.
+Reference run: `reports/compare_execution_2022_05_09_to_2023_10_30_grid50_best_mainnet_like.md`
 
 | Case | Net PnL | ROI | Max DD | Win rate |
 |---|---:|---:|---:|---:|
-| v1 continuous 2024-2025 | 8,484.48 USDT | 28.28% | 36.20% | 99.20% |
-| v3 continuous 2024-2025 | 13,780.52 USDT | 45.94% | 62.36% | 100.00% |
+| grid50_best naive 2022-05-09 to 2023-10-30 | 6,522.52 USDT | 21.74% | 11.37% | 100.00% |
+| grid50_best mainnet-like 2022-05-09 to 2023-10-30 | 6,120.27 USDT | 20.40% | 10.17% | 100.00% |

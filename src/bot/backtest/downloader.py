@@ -21,6 +21,10 @@ log = get_logger(__name__)
 
 REST_URL = "https://api.bybit.com/v5/market/kline"
 TESTNET_URL = "https://api-testnet.bybit.com/v5/market/kline"
+BYBIT_RATE_LIMIT_RETCODE = 10006
+RATE_LIMIT_MAX_RETRIES = 8
+RATE_LIMIT_BASE_SLEEP_SECONDS = 1.0
+PAGE_SLEEP_SECONDS = 0.12
 
 
 # ---------- low-level fetch ----------
@@ -49,10 +53,27 @@ def fetch_klines(
                 "end": cur_end,
                 "limit": page_size,
             }
-            r = client.get(url, params=params)
-            r.raise_for_status()
-            data = r.json()
-            if data.get("retCode") != 0:
+            retries = 0
+            while True:
+                r = client.get(url, params=params)
+                r.raise_for_status()
+                data = r.json()
+                if data.get("retCode") == 0:
+                    break
+                if (
+                    data.get("retCode") == BYBIT_RATE_LIMIT_RETCODE
+                    and retries < RATE_LIMIT_MAX_RETRIES
+                ):
+                    delay = min(30.0, RATE_LIMIT_BASE_SLEEP_SECONDS * (2 ** retries))
+                    log.warning(
+                        "klines.rate_limited",
+                        symbol=symbol,
+                        retry=retries + 1,
+                        sleep_seconds=delay,
+                    )
+                    time.sleep(delay)
+                    retries += 1
+                    continue
                 raise RuntimeError(f"bybit error: {data}")
             chunk = data["result"]["list"]
             if not chunk:
@@ -62,7 +83,7 @@ def fetch_klines(
             if oldest_ts <= start_ms:
                 break
             cur_end = oldest_ts - 1
-            time.sleep(0.05)
+            time.sleep(PAGE_SLEEP_SECONDS)
     if not rows:
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])
     df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"])

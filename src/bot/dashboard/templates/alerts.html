@@ -36,7 +36,7 @@
   </div>
 </section>
 
-<p class="subtle" style="margin:-6px 0 14px">Source: <code>{{ a.source }}</code>{% if a.first_ts %} · {{ a.first_ts }} → {{ a.last_ts }}{% endif %}</p>
+<p class="subtle" style="margin:-6px 0 14px">Source: <code>{{ a.source }}</code>{% if a.first_ts %} · {{ a.first_ts|bangkok_dt }} → {{ a.last_ts|bangkok_dt }}{% endif %}</p>
 
 <div class="grid-2">
   <section class="card">
@@ -97,7 +97,7 @@
               <td>{{ r.count }}</td>
               <td class="{{ 'neg' if r.critical else '' }}">{{ r.critical }}</td>
               <td><code>{{ r.last_event }}</code></td>
-              <td>{{ r.last_ts }}</td>
+              <td>{{ r.last_ts|bangkok_dt }}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -121,7 +121,7 @@
         <tbody>
           {% for ev in a.recent_critical|reverse %}
           <tr class="critical-row">
-            <td>{{ ev.ts }}</td>
+            <td>{{ ev.ts|bangkok_dt }}</td>
             <td><span class="pill level-{{ ev.level|lower }}">{{ ev.level }}</span></td>
             <td><code>{{ ev.event }}</code></td>
             <td>{{ ev.symbol }}</td>
@@ -141,9 +141,9 @@
 <section class="card">
   <div class="card-head">
     <h2>Alert delivery</h2>
-    <a href="/alerting" class="btn-outline">Configure →</a>
+    <a href="/settings#alerting" class="btn-outline">Configure →</a>
   </div>
-  <p class="subtle">Tune thresholds and delivery channels (Telegram / Discord) on the Alerting page.</p>
+  <p class="subtle">Tune thresholds and delivery channels (Telegram / Discord) in Settings.</p>
 </section>
 
 <section class="card">

@@ -44,6 +44,14 @@ class ExchangeAdapter(ABC):
         post_only: bool = True,
     ) -> OrderAck: ...
 
+    async def close_position_market(
+        self,
+        symbol: str,
+        side: Side,
+        link_id: str,
+    ) -> OrderAck:
+        raise NotImplementedError("close_position_market is not implemented by this adapter")
+
     @abstractmethod
     async def cancel(self, symbol: str, link_id: str) -> None: ...
 
@@ -61,3 +69,7 @@ class ExchangeAdapter(ABC):
 
     @abstractmethod
     def stream_user_events(self) -> AsyncIterator[UserEvent]: ...
+
+    def ws_status(self) -> dict:
+        """Optional: return WebSocket connection health. Empty when N/A (e.g. simulator)."""
+        return {}

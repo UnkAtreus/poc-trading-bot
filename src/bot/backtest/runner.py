@@ -21,6 +21,7 @@ from typing import Iterable
 import ulid
 
 from bot.config import Settings
+from bot.backtest.execution import BacktestExecutionConfig, ExecutionStats
 from bot.exchange.simulator import Simulator
 from bot.models import (
     Candle,
@@ -115,6 +116,8 @@ class BacktestResult:
     near_liquidation: bool = False
     liquidation_events: list[LiquidationEvent] = field(default_factory=list)
     near_liquidation_events: list[LiquidationEvent] = field(default_factory=list)
+    execution_config: BacktestExecutionConfig = field(default_factory=BacktestExecutionConfig.naive)
+    execution_stats: ExecutionStats = field(default_factory=ExecutionStats)
     margin_ratio_max: float = 0.0
     min_liq_distance_pct: float = float("inf")
     worst_unrealized_loss: float = 0.0
@@ -233,6 +236,7 @@ async def run_backtest(
     risk: "RiskManager | None" = None,
     initial_equity: float = 0.0,
     stops: BacktestStopConfig | None = None,
+    execution: BacktestExecutionConfig | None = None,
 ) -> BacktestResult:
     """Run a backtest. Candles must be sorted ascending by timestamp per symbol.
     All symbols are walked in lockstep by global timestamp.
@@ -242,7 +246,12 @@ async def run_backtest(
     layering is unbounded — useful for understanding raw signal behavior, but
     not how the live bot would actually run.
     """
-    sim = Simulator(maker_bps=settings.bot.fees.maker_bps, taker_bps=settings.bot.fees.taker_bps)
+    execution_config = execution or BacktestExecutionConfig.naive()
+    sim = Simulator(
+        maker_bps=settings.bot.fees.maker_bps,
+        taker_bps=settings.bot.fees.taker_bps,
+        execution=execution_config,
+    )
     # If a RiskManager was passed in, retarget its clock to simulation time so
     # cooldowns and daily-loss rolls happen in sim seconds, not wall seconds.
     sim_clock = {"now": 0.0}
@@ -263,7 +272,7 @@ async def run_backtest(
             timeline.append((c.timestamp, sym, c))
     timeline.sort(key=lambda x: x[0])
 
-    result = BacktestResult(initial_equity=initial_equity)
+    result = BacktestResult(initial_equity=initial_equity, execution_config=execution_config)
     factory = _link_factory()
     last_close: dict[str, float] = {}
     last_candle: dict[str, Candle] = {}
@@ -361,11 +370,21 @@ async def run_backtest(
         raw_sig = None if account_halted else signal.on_candle(candle)
         sig = None if monthly_entry_locked else raw_sig
         sig_dir = sig.direction if sig else None
+        notional_scale = sig.size_scale if sig else 1.0
+        allow_new_position = sig.allow_new_position if sig else True
+        allow_layering = sig.allow_layering if sig else True
 
         # 5. Candle close to SM.
         decision = sm.step(
             ps.ctx,
-            CandleClose(timestamp=candle.timestamp, close_price=candle.close, signal_direction=sig_dir),
+            CandleClose(
+                timestamp=candle.timestamp,
+                close_price=candle.close,
+                signal_direction=sig_dir,
+                notional_scale=notional_scale,
+                allow_new_position=allow_new_position,
+                allow_layering=allow_layering,
+            ),
             params,
             link_id_factory=factory,
         )
@@ -379,6 +398,7 @@ async def run_backtest(
     # Close out final result.
     result.final_state = {s: ps.ctx for s, ps in state.items()}
     result.fills = sim.fills
+    result.execution_stats = sim.execution_stats
     if result.min_liq_distance_pct == float("inf"):
         result.min_liq_distance_pct = 0.0
     if result.min_available_balance == float("inf"):
@@ -652,7 +672,13 @@ async def _drain_events(
                 ps.pending_entry_notional.pop(ev.link_id, None)
                 decision = sm.step(
                     ps.ctx,
-                    EntryFilled(link_id=ev.link_id, qty=ev.qty, price=ev.price, timestamp=ev.timestamp),
+                    EntryFilled(
+                        link_id=ev.link_id,
+                        qty=ev.qty,
+                        price=ev.price,
+                        timestamp=ev.timestamp,
+                        side=ev.side,
+                    ),
                     params, link_id_factory=factory,
                 )
             else:
@@ -680,7 +706,12 @@ async def _drain_events(
                         pass
                 decision = sm.step(
                     ps.ctx,
-                    OrderRejected(link_id=ev.link_id, purpose=purpose, timestamp=ev.timestamp),
+                    OrderRejected(
+                        link_id=ev.link_id,
+                        purpose=purpose,
+                        timestamp=ev.timestamp,
+                        reason=ev.reason,
+                    ),
                     params, link_id_factory=factory,
                 )
                 ps.ctx = decision.ctx
@@ -717,9 +748,23 @@ async def _execute_actions(
                 risk.on_entry_placed(symbol, notional)
                 ps.pending_entry_notional[a.link_id] = notional
         elif isinstance(a, PlaceTP):
-            await sim.place_limit(symbol, a.direction.tp_side, a.qty, a.price, a.link_id)
+            await sim.place_limit(
+                symbol,
+                a.direction.tp_side,
+                a.qty,
+                a.price,
+                a.link_id,
+                reduce_only=True,
+            )
         elif isinstance(a, PlaceMergeTP):
-            await sim.place_limit(symbol, a.direction.tp_side, a.qty, a.price, a.link_id)
+            await sim.place_limit(
+                symbol,
+                a.direction.tp_side,
+                a.qty,
+                a.price,
+                a.link_id,
+                reduce_only=True,
+            )
         elif isinstance(a, CancelEntry):
             await sim.cancel(symbol, a.link_id)
             if risk is not None:

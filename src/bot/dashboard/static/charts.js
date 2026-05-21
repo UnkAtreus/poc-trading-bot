@@ -23,15 +23,48 @@
   }
   applyChartDefaults();
 
+  const bangkokDateTime = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Bangkok",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  const bangkokMonthDayTime = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Bangkok",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  function formatBangkokLabel(value, fallback) {
+    if (!value) return fallback || "";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return fallback || String(value);
+    return bangkokDateTime.format(d) + " ICT";
+  }
+
+  function formatBangkokShort(value, fallback) {
+    if (!value) return fallback || "";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return fallback || String(value);
+    return bangkokMonthDayTime.format(d) + " ICT";
+  }
+
   async function fetchJson(url) {
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    const safeUrl = new URL(url, window.location.origin).toString();
+    const res = await fetch(safeUrl, { headers: { Accept: "application/json" }, credentials: "same-origin" });
     if (!res.ok) throw new Error("fetch " + url + " -> " + res.status);
     return res.json();
   }
 
   function buildEquityChart(canvas, data) {
     const rows = (data && data.history) || [];
-    const labels = rows.map(r => (r.ts || "").replace("T", " ").slice(0, 19));
+    const labels = rows.map(r => formatBangkokLabel(r.ts));
     const equity = rows.map(r => r.total_equity);
     return new Chart(canvas, {
       type: "line",
@@ -132,7 +165,7 @@
 
   function buildEquityDrawdown(canvas, data) {
     const rows = (data && data.history) || [];
-    const labels = rows.map(r => (r.ts || "").replace("T", " ").slice(0, 16));
+    const labels = rows.map(r => formatBangkokLabel(r.ts));
     const equity = rows.map(r => r.total_equity || null);
     let peak = 0;
     const drawdown = rows.map(r => {
@@ -201,7 +234,7 @@
 
   function buildMarginUtil(canvas, data) {
     const rows = (data && data.history) || [];
-    const labels = rows.map(r => (r.ts || "").replace("T", " ").slice(0, 16));
+    const labels = rows.map(r => formatBangkokLabel(r.ts));
     const util = rows.map(r => {
       const eq = r.total_equity || 0;
       const av = r.total_available_balance;
@@ -233,7 +266,7 @@
 
   function buildEventTimeline(canvas, data) {
     const rows = (data && data.timeline) || [];
-    const labels = rows.map(r => (r.bucket || "").replace("T", " ").slice(5, 16));
+    const labels = rows.map(r => formatBangkokShort(r.bucket));
     return new Chart(canvas, {
       type: "bar",
       data: {

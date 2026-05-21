@@ -4,8 +4,7 @@ active:
   - SOLUSDT
   - XRPUSDT
   - BNBUSDT
-  - HYPEUSDT
-  - XAUTUSDT
+  - LTCUSDT
 
 overrides:
   HYPEUSDT:

@@ -41,6 +41,7 @@ def build(name: str, params: dict) -> SignalEngine:
         import bot.signals.grid  # noqa: F401
         import bot.signals.placeholder_rsi  # noqa: F401
         import bot.signals.random_signal  # noqa: F401
+        import bot.signals.regime_gate  # noqa: F401
         import bot.signals.trend_filter  # noqa: F401
         import bot.signals.zscore  # noqa: F401
     if name not in _REGISTRY:

@@ -110,6 +110,12 @@ class LoopConfig(BaseModel, extra="forbid"):
     reconcile_every_seconds: int = Field(gt=0)
 
 
+class DustCleanupConfig(BaseModel, extra="forbid"):
+    enabled: bool = False
+    max_attempts: int = Field(default=3, ge=1)
+    retry_seconds: int = Field(default=300, ge=0)
+
+
 class BotConfig(BaseModel, extra="forbid"):
     sizing: Sizing
     offsets: Offsets
@@ -120,6 +126,7 @@ class BotConfig(BaseModel, extra="forbid"):
     liquidation: LiquidationConfig = Field(default_factory=LiquidationConfig)
     optimizer: OptimizerConfig = Field(default_factory=OptimizerConfig)
     regime_router: RegimeRouterConfig = Field(default_factory=RegimeRouterConfig)
+    dust_cleanup: DustCleanupConfig = Field(default_factory=DustCleanupConfig)
     signal: SignalConfig
     loop: LoopConfig
 

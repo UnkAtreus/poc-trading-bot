@@ -1,31 +1,29 @@
 # Live Monitor
 
-- Generated UTC: `2026-05-13T02:43:49.033464+00:00`
+- Generated UTC: `2026-05-21T10:25:26.446685+00:00`
 - Mode: `testnet`
-- Severity: `CRITICAL`
+- Severity: `OK`
 - Kill triggered: `False`
-- Source log: `/Users/atreus/Desktop/work/sideproject/poc-trading-bot/logs/testnet_dry_run_20260512_122410.log`
+- Source log: `/Users/atreus/Desktop/work/sideproject/poc-trading-bot/logs/testnet_recommended8_20260521_162952.log`
 - Bot alive: `True`
-- Latest heartbeat: `2026-05-13T02:43:18.156178Z`
-- Heartbeat age seconds: `30.88`
+- Latest heartbeat: `2026-05-21T10:24:55.084402Z`
+- Heartbeat age seconds: `31.36`
 
 ## Issues
 
-- `CRITICAL` `missing_reduce_only_exit` `XRPUSDT`: Open exchange position has no reduce-only TP/exit order
-- `WARN` `repeated_log_failure`: entry_rejected occurred 9 times in the recent monitor window
-- `CRITICAL` `repeated_log_failure`: merge_tp_place_rejected occurred 29 times in the recent monitor window
+- None.
 
 ## Wallet
 
-- Total equity: `92861.04308118`
-- Total available balance: `92859.16608414`
-- USDT equity: `92876.92012814`
-- USDT unrealised PnL: `0.00583000`
-- Daily closed PnL: `75.97`
+- Total equity: `105564.88587468`
+- Total available balance: `105563.10454334`
+- USDT equity: `105663.48485395`
+- USDT unrealised PnL: `0.00000000`
+- Daily closed PnL: `462.80`
 
 ## Positions
 
-- `XRPUSDT` `Sell` size=`0.1` avg=`1.5047` mark=`1.447` notional=`0.14` upnl=`0.00577`
+- None.
 
 ## Open Orders
 
@@ -34,9 +32,10 @@
 ## Current Bot States
 
 - `BNBUSDT`: `IDLE`
-- `BTCUSDT`: `IDLE`
 - `ETHUSDT`: `IDLE`
-- `HYPEUSDT`: `IDLE`
+- `LINKUSDT`: `IDLE`
+- `LTCUSDT`: `IDLE`
 - `SOLUSDT`: `IDLE`
-- `XAUTUSDT`: `IDLE`
-- `XRPUSDT`: `MERGE_PENDING`
+- `UNIUSDT`: `IDLE`
+- `XLMUSDT`: `IDLE`
+- `XRPUSDT`: `IDLE`

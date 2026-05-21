@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 
+import os
+
 from bot.monitoring.ai_context import (
     build_context,
+    latest_log,
     parse_log_line,
     write_jsonl,
     write_markdown,
@@ -106,3 +109,35 @@ def test_ai_context_includes_monitor_summary_when_present(tmp_path):
     text = md.read_text(encoding="utf-8")
     assert "## Monitor Summary" in text
     assert "missing_reduce_only_exit" in text
+
+
+def test_latest_log_prefers_bot_log_over_newer_non_bot_log(tmp_path):
+    bot_log = tmp_path / "bot.log"
+    bot_log.write_text(
+        "2026-05-12T08:44:14.537084Z [info     ] heartbeat states={'BTCUSDT': 'IDLE'}\n",
+        encoding="utf-8",
+    )
+    server_log = tmp_path / "dashboard_server.log"
+    server_log.write_text(
+        "INFO:     Started server process [47396]\n"
+        "INFO:     Waiting for application startup.\n"
+        "INFO:     Application startup complete.\n",
+        encoding="utf-8",
+    )
+    older = bot_log.stat().st_mtime - 3600
+    newer = bot_log.stat().st_mtime + 3600
+    os.utime(bot_log, (older, older))
+    os.utime(server_log, (newer, newer))
+
+    assert latest_log(tmp_path, "*.log") == bot_log
+
+
+def test_latest_log_falls_back_to_newest_when_no_bot_events(tmp_path):
+    a = tmp_path / "a.log"
+    b = tmp_path / "b.log"
+    a.write_text("nothing parseable here\n", encoding="utf-8")
+    b.write_text("also nothing\n", encoding="utf-8")
+    os.utime(a, (1000.0, 1000.0))
+    os.utime(b, (2000.0, 2000.0))
+
+    assert latest_log(tmp_path, "*.log") == b

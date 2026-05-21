@@ -5,6 +5,7 @@ from bot.signals.base import build
 from bot.signals.bollinger import BollingerBands
 from bot.signals.ema_cross import EMACrossover
 from bot.signals.grid import GridSignal
+from bot.signals.regime_gate import RegimeGate
 from bot.signals.zscore import ZScore
 
 
@@ -162,3 +163,4 @@ def test_registry_builds_all_new_engines():
     assert isinstance(build("zscore", {"period": 30, "threshold": 2.0}), ZScore)
     assert isinstance(build("grid", {"anchor_period": 50, "entry_bps": 50.0, "step_bps": 30.0}), GridSignal)
     assert isinstance(build("ema_crossover", {"fast": 9, "slow": 21}), EMACrossover)
+    assert isinstance(build("regime_gate", {"inner": "grid"}), RegimeGate)

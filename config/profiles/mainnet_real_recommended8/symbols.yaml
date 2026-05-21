@@ -1,0 +1,11 @@
+active:
+  - UNIUSDT
+  - ETHUSDT
+  - XLMUSDT
+  - LTCUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - LINKUSDT
+
+overrides: {}

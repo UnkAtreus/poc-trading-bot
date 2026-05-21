@@ -6,7 +6,7 @@
 
 Replica of the existing `main` strategy on Bybit USDT-perp futures: **signal-based 1-minute limit scalping with auto-merge TP at the position BEP**. Per closed 1m candle, a pluggable signal decides direction; an entry limit is placed slightly through the close; if filled, a tight TP limit is placed at the fill; if the TP doesn't fill within 30 minutes of the first un-TP'd fill, all pending TPs are cancelled and replaced with one merged TP at `BEP × (1 ± tp_offset_bps / 10000)`.
 
-**Order sizing:** $114 margin × 10× leverage = $1,140 notional per order. Position can layer (multiple entries before TP fires) — BEP is recomputed on every fill.
+**Order sizing:** controlled by `sizing.margin_usd × sizing.leverage` in `config/bot.yaml` (currently 100 × 10 = $1,000 notional per order; was $114 × 10 in the earliest builds). Position can layer (multiple entries before TP fires) — BEP is recomputed on every fill.
 
 **Modes:** `backtest` (offline historical klines), `testnet` (api-testnet.bybit.com), `mainnet`. The same strategy code runs unchanged in all three; only the `ExchangeAdapter` swaps.
 
@@ -85,6 +85,92 @@ pullback, moderate DD; closer to post-pump consolidation than crash.
 overall max DD. Important caveat: it had a 16-month zero-trade stretch from
 2022-06 through 2023-09 and ended with seven symbols still in `MERGE_PENDING`;
 v3 is profitable historically but not a clean monthly-income profile as-is.
+
+**Current live config (2026-05-20):** active `config/bot.yaml` is the **v2
+grid50_best** variant, **not** the v1 rollback or the v3 crash-balanced setup.
+Signal is `trend_filter` wrapping `grid` with `inner_anchor_period=200`,
+`inner_entry_bps=50`, `inner_step_bps=25`, `max_trend_bps=20`. Sizing is
+margin 100 USDT × 10× leverage (= 1,000 USDT notional/order). Caps:
+`max_notional_per_symbol_usd=4000`, `max_notional_account_usd=12500`,
+`daily_loss_limit_usd=5000`. TP offset 75 bps, entry offset 5 bps, merge timer
+30 min `first_fill`. `regime_router.enabled=false`, no `crash_guard` wrapper.
+Active symbols: BTC, ETH, SOL, XRP, BNB, LTC (HYPEUSDT has a 300 USDT
+per-symbol override but is not in `active`). Running mode `testnet` in tmux
+session `testnet_dry_run` (PID launched 2026-05-17 22:51 ICT, see
+`logs/testnet_dry_run_20260517_155146.log`). Latest live snapshot at the time
+of this note: equity ≈ 104,359 USDT (started 30,000), +1,151 daily closed PnL,
+severity `WARN`, 1 open position. The earlier "rollback to v1" note above is
+stale relative to this state.
+
+**Latest strategy state (2026-05-20):** keep **one portfolio only**. Do not
+create/use a `satellite` portfolio. Current active portfolio remains the six
+symbols in `config/symbols.yaml`: BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT, BNBUSDT,
+LTCUSDT. User decision: **do not add `VIRTUALUSDT`**.
+
+**Candidate symbol screen (2026-05-20):** broad Bybit USDT-perp screen saved
+to `logs/symbol_candidate_screen_2026_05_20.csv`; realistic 2026 YTD
+single-symbol backtest saved to
+`logs/symbol_candidate_backtest_2026_ytd_grid50_best_mainnet_like.csv` and
+archive `data/backtests/runs/20260520T101020904341Z_symbol_candidate_screen_073fbe50fc.json`.
+Best standalone candidate was `VIRTUALUSDT`: 2026-01-01 → 2026-05-20,
+mainnet-like realistic 0.3s, annualized ROI 17.42%, ROI 6.64%, max DD 2.79%,
+205 trades, final open exposure about 1,006 USDT. Other screened candidates
+were far weaker.
+
+**Rejected VIRTUALUSDT candidate (2026-05-20):** test-only run adding
+`VIRTUALUSDT` to the current six-symbol portfolio for 2026-01-01 → 2026-05-20
+produced mainnet-like realistic annualized ROI 23.48%, ROI 8.94%, max DD
+7.22%, 287 trades. Report:
+`reports/compare_execution_2026_01_01_to_2026_05_20_grid50_best_plus_virtual_mainnet_like.md`.
+Baseline current six-symbol 2026 YTD was annualized ROI 6.06%, max DD 7.48%,
+82 trades. User explicitly said **do not add `VIRTUALUSDT`**. Keep this only
+as historical research; do not recommend it as next config change unless user
+reopens the topic.
+
+**Regime gate status (2026-05-20):** `regime_gate` is implemented and testable
+but is **not active** in `config/bot.yaml`. Best tested gate was
+`max_ema_spread_bps=50:max_adx=35:unsafe_action=reduce:unsafe_size_scale=0.5`.
+It reduced trend-window DD but also reduced ROI below the 12% annual target.
+Keep `grid50_best` default without regime gate for now. Reference reports:
+`reports/strategies/regime_gate_experiment_2026_05_20.md` and
+`reports/strategies/current_vs_grid50_regime_gate_2026_05_20.md`.
+
+**Top 50 grid50_best note (2026-05-20):** Top 50 backtests for 2022-05-09 to
+2023-10-30 are summarized in
+`reports/top50_grid50_best_2022_05_09_to_2023_10_30_summary_2026_05_20.md`.
+Batch 1 majors (BTC, ETH, BNB, SOL, XRP) produced +4,936.22 USDT, 16.45% ROI,
+10.32% max DD. Batch 2 alts were mostly positive; UNI (+2,995.41, 9.98% ROI,
+1.63% max DD) and MATIC (+2,456.38, 8.19% ROI, 5.48% max DD) were strongest.
+Do not use `agent-browser` to scrape kline data; `downloader.py` already uses
+the API and writes Parquet. Handle rate limits with sleep/API throttling.
+
+**Dashboard analysis tab notes (2026-05-20):**
+- `/analysis` reads research runs from `data/backtests/index.jsonl` and
+  flattens per `(strategy, time-window)`. Charts: configurable primary
+  scatter/bar + fixed Risk-vs-Return scatter. **No heatmap** (removed).
+- Strategy filter pills, summary table, heatmap row labels, detail-panel
+  title, and chart legend all run candidate names through `prettifyStrategy`
+  (JS) / Jinja `s.split(' / ')[-1]` so a long name like
+  `trend_grid_a200_e30_s15_t30 / realistic_1s` displays as `realistic_1s`.
+  Full name preserved in `title` tooltips.
+- Service has a **strict deny-list** in `_HIDDEN_STRATEGY_NAMES`
+  (`trend_grid_a200_e30_s15_t30`, `realistic_1s`, `realistic_3s`,
+  `realistic_5s`) — applied in `backtest_analysis()` before any other filter,
+  so these strategies are stripped from rows AND `all_strategies` regardless
+  of which run produced them. Bare-name match AND ` / `-suffix match.
+- Backed-out artifacts for the 3 `cli_backtest` runs that produced the bare
+  `trend_grid_a200_e30_s15_t30` live in
+  `data/backtests/.removed-trend_grid_a200_e30_s15_t30/` (JSONL/CSV lines +
+  JSON archives). `index.jsonl` was rewritten 11 → 8 lines.
+- **Prefill (Analysis → Backtests)** uses `sessionStorage["backtest_prefill"]`
+  with marker `?prefill=1` — no more base64 in the URL. The legacy
+  `?prefill=<base64>` path is still parsed as fallback. Carries window, signal
+  engine+params, margin/leverage/TP/account+symbol caps, symbols.
+- Prefill UX: sticky `.prefill-banner` with "Clear prefill" button; every
+  populated field gets the `.prefilled` CSS class for the blue tint.
+- **`scripts/run_dashboard.py`** has **hot reload on by default** (watches
+  `src/bot/`, includes `*.py`, `*.html`, `*.css`, `*.js`). Pass `--no-reload`
+  for production-style runs.
 
 ## Trading flow
 

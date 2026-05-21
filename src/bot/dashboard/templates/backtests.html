@@ -24,28 +24,30 @@
 <section class="card">
   <div class="card-head">
     <h2>Start backtest</h2>
-    <p class="subtle">Auto-generates a performance report on completion.</p>
+    <p class="subtle">All sizing / cap / TP fields are optional — leave blank to use <code>config/bot.yaml</code>. Prefilled fields are highlighted.</p>
   </div>
   <form id="backtest-form" class="form-sections">
 
     <fieldset class="form-section">
-      <legend>Window</legend>
-      <div class="form-row two">
+      <legend>① Window</legend>
+      <div class="form-row three">
         <label>Start date<input name="start" type="date" required></label>
         <label>End date<input name="end" type="date" required></label>
+        <label>Quick range
+          <select id="backtest-quick-range">
+            <option value="">(custom)</option>
+            <option value="ytd">Year to date</option>
+            <option value="3m">Last 3 months</option>
+            <option value="6m">Last 6 months</option>
+            <option value="12m">Last 12 months</option>
+            <option value="24m">Last 24 months</option>
+          </select>
+        </label>
       </div>
     </fieldset>
 
     <fieldset class="form-section">
-      <legend>Sizing</legend>
-      <div class="form-row two">
-        <label>Initial equity (USDT)<input name="initial_equity" type="number" step="any" value="30000" required></label>
-        <div></div>
-      </div>
-    </fieldset>
-
-    <fieldset class="form-section">
-      <legend>Signal</legend>
+      <legend>② Signal</legend>
       <div class="form-row two">
         <label>Engine
           <select name="signal_engine">
@@ -55,14 +57,59 @@
             {% endfor %}
           </select>
         </label>
-        <label>Params <span class="subtle">(optional, e.g. <code>period=20:num_std=2.0</code>)</span>
-          <input name="signal_params" type="text" autocomplete="off">
+        <label>Params <span class="subtle">colon-separated <code>k=v</code></span>
+          <input name="signal_params" type="text" autocomplete="off" placeholder="e.g. period=20:num_std=2.0">
         </label>
+      </div>
+      <div id="signal-guide" class="signal-guide"></div>
+      <div id="signal-params-preview" class="signal-params-preview" hidden></div>
+    </fieldset>
+
+    <fieldset class="form-section">
+      <legend>③ Sizing &amp; risk</legend>
+
+      <div class="form-row three">
+        <label>Initial equity (USDT)<span class="subtle">required</span>
+          <input name="initial_equity" type="number" step="any" value="30000" required>
+        </label>
+        <label>Margin per order (USDT)<span class="subtle">optional</span>
+          <input name="margin_usd" type="number" step="any" autocomplete="off" placeholder="bot.yaml">
+        </label>
+        <label>Leverage<span class="subtle">1–100</span>
+          <input name="leverage" type="number" step="1" min="1" max="100" autocomplete="off" placeholder="bot.yaml">
+        </label>
+      </div>
+
+      <div id="notional-preview" class="notional-preview" hidden></div>
+
+      <div class="form-row three">
+        <label>TP offset (bps)<span class="subtle">10 bps = 0.1%</span>
+          <input name="tp_offset_bps" type="number" step="any" min="0" autocomplete="off" placeholder="bot.yaml">
+        </label>
+        <label>Account cap (USDT)<span class="subtle">max open notional</span>
+          <input name="max_notional_account" type="number" step="any" min="0" autocomplete="off" placeholder="bot.yaml">
+        </label>
+        <label>Per-symbol cap (USDT)<span class="subtle">per-symbol notional</span>
+          <input name="max_notional_per_symbol" type="number" step="any" min="0" autocomplete="off" placeholder="bot.yaml">
+        </label>
+      </div>
+
+      <div class="form-row three">
+        <label>Daily loss limit (USDT)
+          <input name="daily_loss_limit" type="number" step="any" min="0" autocomplete="off" placeholder="bot.yaml">
+        </label>
+        <div></div>
+        <div></div>
       </div>
     </fieldset>
 
     <fieldset class="form-section symbol-picker">
-      <legend>Symbols</legend>
+      <legend>④ Symbols</legend>
+      <div class="symbol-picker-toolbar">
+        <button type="button" class="btn-outline btn-tiny" data-symbol-select="all">Select all</button>
+        <button type="button" class="btn-outline btn-tiny" data-symbol-select="none">Clear</button>
+        <span class="subtle" id="symbol-count"></span>
+      </div>
       <div class="symbol-grid">
         {% for sym in active_symbols %}
           <label class="check">
@@ -77,8 +124,8 @@
     </fieldset>
 
     <div class="form-actions">
-      <button type="submit">Start backtest</button>
-      <button type="reset" class="outline">Reset</button>
+      <button type="submit">▶ Start backtest</button>
+      <button type="reset" class="outline">Reset form</button>
     </div>
   </form>
   <div id="backtest-output" class="preview-output"></div>
@@ -94,7 +141,7 @@
       <tbody>
         {% for j in jobs %}
         <tr data-job-ts="{{ j.ts }}" data-status="{{ j.status }}">
-          <td>{{ j.started_at_utc or '' }}</td>
+          <td>{{ j.started_at_utc|bangkok_dt }}</td>
           <td><span class="pill status-{{ j.status }}">{{ j.status }}</span></td>
           <td>{{ j.signal or '' }}</td>
           <td>{{ (j.symbols or [])|join(', ') }}</td>
@@ -127,7 +174,7 @@
         <tr>
           <td><a href="/backtests?report={{ r.path|urlencode }}">{{ r.path }}</a></td>
           <td>{{ r.size }}</td>
-          <td>{{ r.modified }}</td>
+          <td>{{ r.modified|bangkok_dt }}</td>
         </tr>
         {% endfor %}
       </tbody>

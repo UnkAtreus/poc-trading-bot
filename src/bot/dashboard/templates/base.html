@@ -10,14 +10,20 @@
   <script defer src="{{ static_url('dashboard.js') }}"></script>
   <script defer src="{{ static_url('charts.js') }}"></script>
   <script defer src="{{ static_url('report-modal.js') }}"></script>
+  <script defer src="{{ static_url('analysis.js') }}"></script>
 </head>
 <body>
+  {% set active_profile = status.settings.profile or {} %}
+  {% set active_symbols = status.settings.symbols.active or [] %}
   <header class="topbar">
     <div>
-      <h1>Trading Bot Dashboard</h1>
-      <p class="subtle">Mode {{ status.settings.mode }} · Severity {{ status.monitor.severity or "n/a" }}</p>
+      <h1>Trading Bot Dashboard <span class="profile-title">{{ active_profile.name or "default" }}</span></h1>
+      <p class="subtle">
+        {{ active_profile.config_dir or "config" }} · Mode {{ status.settings.mode }} · {{ active_symbols|length }} symbols · Severity {{ status.monitor.severity or "n/a" }}
+      </p>
     </div>
     <div class="top-actions">
+      <span class="pill profile-pill">{{ active_profile.name or "default" }}</span>
       <span class="pill severity-{{ (status.monitor.severity or 'unknown')|lower }}">{{ status.monitor.severity or "n/a" }}</span>
       {% if status.kill_active %}
         <span class="pill danger">KILL ACTIVE</span>
@@ -31,11 +37,11 @@
     <a class="{{ 'active' if page == 'overview' else '' }}" href="/">Overview</a>
     <a class="{{ 'active' if page == 'trading' else '' }}" href="/trading">Trading</a>
     <a class="{{ 'active' if page == 'balance' else '' }}" href="/balance">Balance</a>
-    <a class="{{ 'active' if page == 'settings' else '' }}" href="/settings">Settings</a>
-    <a class="{{ 'active' if page == 'alerting' else '' }}" href="/alerting">Alerting</a>
     <a class="{{ 'active' if page == 'alerts' else '' }}" href="/alerts">Alerts & Logs</a>
     <a class="{{ 'active' if page == 'backtests' else '' }}" href="/backtests">Backtests</a>
+    <a class="{{ 'active' if page == 'analysis' else '' }}" href="/analysis">Analysis</a>
     <a class="{{ 'active' if page == 'logs' else '' }}" href="/logs">Raw Events</a>
+    <a class="{{ 'active' if page in ['settings', 'alerting'] else '' }}" href="/settings">Settings</a>
   </nav>
 
   <main>

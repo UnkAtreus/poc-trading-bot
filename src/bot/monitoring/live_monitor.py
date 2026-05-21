@@ -6,7 +6,7 @@ import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from bot.config import Mode, Settings
 from bot.models import Side
@@ -95,6 +95,7 @@ class MonitorSnapshot:
     wallet: WalletSnapshot | None
     daily_closed_pnl: float | None
     issues: list[MonitorIssue]
+    daily_closed_pnl_by_symbol: dict[str, dict[str, Any]] | None = None
 
 
 class BybitMonitorClient:
@@ -166,11 +167,19 @@ class BybitMonitorClient:
         )
 
     def get_daily_closed_pnl(self, symbols: list[str], now_ts: float | None = None) -> float:
+        rows = self.get_daily_closed_pnl_by_symbol(symbols, now_ts=now_ts)
+        return sum(float(row.get("realised_pnl") or 0.0) for row in rows.values())
+
+    def get_daily_closed_pnl_by_symbol(
+        self,
+        symbols: list[str],
+        now_ts: float | None = None,
+    ) -> dict[str, dict[str, Any]]:
         now = datetime.fromtimestamp(now_ts or time.time(), tz=timezone.utc)
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         start_ms = int(day_start.timestamp() * 1000)
         end_ms = int(now.timestamp() * 1000)
-        total = 0.0
+        out = {symbol: _empty_closed_pnl_stats(symbol) for symbol in symbols}
         for symbol in symbols:
             r = self.http.get_closed_pnl(
                 category="linear",
@@ -179,8 +188,8 @@ class BybitMonitorClient:
                 endTime=end_ms,
                 limit=100,
             )
-            total += sum(float(row.get("closedPnl") or 0.0) for row in r.get("result", {}).get("list", []))
-        return total
+            out[symbol] = _summarize_closed_pnl_rows(symbol, r.get("result", {}).get("list", []))
+        return out
 
 
 def run_monitor(
@@ -203,7 +212,15 @@ def run_monitor(
     positions = client.get_positions(settings.symbols.active)
     orders = client.get_open_orders(settings.symbols.active)
     wallet = client.get_wallet()
-    daily_closed_pnl = client.get_daily_closed_pnl(settings.symbols.active)
+    daily_closed_pnl_by_symbol = None
+    if hasattr(client, "get_daily_closed_pnl_by_symbol"):
+        daily_closed_pnl_by_symbol = client.get_daily_closed_pnl_by_symbol(settings.symbols.active)
+        daily_closed_pnl = sum(
+            float(row.get("realised_pnl") or 0.0)
+            for row in daily_closed_pnl_by_symbol.values()
+        )
+    else:
+        daily_closed_pnl = client.get_daily_closed_pnl(settings.symbols.active)
     bot_alive = check_bot_alive(process_pattern=process_pattern, tmux_session=tmux_session)
     local_states = load_local_states(state_dir)
 
@@ -215,6 +232,7 @@ def run_monitor(
         open_orders=orders,
         wallet=wallet,
         daily_closed_pnl=daily_closed_pnl,
+        daily_closed_pnl_by_symbol=daily_closed_pnl_by_symbol,
         bot_alive=bot_alive,
         heartbeat_stale_seconds=heartbeat_stale_seconds,
         now_ts=time.time(),
@@ -246,12 +264,15 @@ def evaluate_snapshot(
     now_ts: float,
     repeated_failure_threshold: int,
     failure_window_seconds: float = 900.0,
+    daily_closed_pnl_by_symbol: dict[str, dict[str, Any]] | None = None,
 ) -> MonitorSnapshot:
     issues: list[MonitorIssue] = []
     latest_heartbeat_ts = _latest_heartbeat_ts(Path(context.source_log))
     heartbeat_age = None
     if latest_heartbeat_ts is None:
-        issues.append(MonitorIssue("WARN", "heartbeat_missing", "No heartbeat found in log"))
+        source_age = _file_age_seconds(Path(context.source_log), now_ts)
+        if source_age is None or source_age > heartbeat_stale_seconds:
+            issues.append(MonitorIssue("WARN", "heartbeat_missing", "No heartbeat found in log"))
     else:
         heartbeat_age = max(0.0, now_ts - _parse_ts(latest_heartbeat_ts))
         if heartbeat_age > heartbeat_stale_seconds:
@@ -292,14 +313,25 @@ def evaluate_snapshot(
                 )
             )
         if not _has_reduce_only_exit(pos, open_orders):
-            issues.append(
-                MonitorIssue(
-                    "CRITICAL",
-                    "missing_reduce_only_exit",
-                    "Open exchange position has no reduce-only TP/exit order",
-                    pos.symbol,
+            local = local_states.get(pos.symbol) or {}
+            if local.get("state") == "DUST_STRANDED":
+                issues.append(
+                    MonitorIssue(
+                        "WARN",
+                        "dust_stranded_position",
+                        "Position below exchange min notional/qty; close manually",
+                        pos.symbol,
+                    )
                 )
-            )
+            else:
+                issues.append(
+                    MonitorIssue(
+                        "CRITICAL",
+                        "missing_reduce_only_exit",
+                        "Open exchange position has no reduce-only TP/exit order",
+                        pos.symbol,
+                    )
+                )
 
     account_cap = settings.bot.risk.max_notional_account_usd
     if total_notional > account_cap:
@@ -344,6 +376,7 @@ def evaluate_snapshot(
         wallet=wallet,
         daily_closed_pnl=daily_closed_pnl,
         issues=issues,
+        daily_closed_pnl_by_symbol=daily_closed_pnl_by_symbol,
     )
 
 
@@ -545,6 +578,13 @@ def _latest_heartbeat_ts(source_log: Path) -> str | None:
     return latest
 
 
+def _file_age_seconds(path: Path, now_ts: float) -> float | None:
+    try:
+        return max(0.0, now_ts - path.stat().st_mtime)
+    except OSError:
+        return None
+
+
 def _has_reduce_only_exit(pos: MonitorPosition, orders: list[MonitorOrder]) -> bool:
     exit_side = Side.SELL.value if pos.signed_size > 0 else Side.BUY.value
     exit_qty = sum(
@@ -582,6 +622,102 @@ def _parse_bool(value) -> bool:
     if isinstance(value, str):
         return value.lower() == "true"
     return bool(value)
+
+
+def _empty_closed_pnl_stats(symbol: str) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "breakeven": 0,
+        "realised_pnl": 0.0,
+        "avg_pnl": 0.0,
+        "best_trade": None,
+        "worst_trade": None,
+        "max_drawdown": 0.0,
+        "max_drawdown_pct": None,
+        "last_closed_at": None,
+        "recent_trades": [],
+    }
+
+
+def _summarize_closed_pnl_rows(
+    symbol: str,
+    rows: list[dict],
+) -> dict[str, Any]:
+    out = _empty_closed_pnl_stats(symbol)
+    running = 0.0
+    peak = 0.0
+    recent: list[dict[str, Any]] = []
+    ordered = sorted(
+        rows,
+        key=lambda r: float(r.get("createdTime") or r.get("updatedTime") or 0.0),
+    )
+    for row in ordered:
+        pnl = float(row.get("closedPnl") or row.get("realisedPnl") or row.get("realizedPnl") or 0.0)
+        out["trades"] = int(out["trades"] or 0) + 1
+        out["realised_pnl"] = float(out["realised_pnl"] or 0.0) + pnl
+        if pnl > 0:
+            out["wins"] = int(out["wins"] or 0) + 1
+        elif pnl < 0:
+            out["losses"] = int(out["losses"] or 0) + 1
+        else:
+            out["breakeven"] = int(out["breakeven"] or 0) + 1
+        out["best_trade"] = pnl if out["best_trade"] is None else max(float(out["best_trade"]), pnl)
+        out["worst_trade"] = pnl if out["worst_trade"] is None else min(float(out["worst_trade"]), pnl)
+        close_ms = row.get("createdTime") or row.get("updatedTime")
+        if close_ms:
+            ts = datetime.fromtimestamp(float(close_ms) / 1000.0, tz=timezone.utc).isoformat()
+            out["last_closed_at"] = ts
+        else:
+            ts = None
+        recent.append({
+            "ts": ts,
+            "symbol": symbol,
+            "purpose": "closed_pnl",
+            "direction": _closed_pnl_direction(row.get("side")),
+            "qty": _float_or_zero(row.get("closedSize") or row.get("qty")),
+            "entry_price": _float_or_none(row.get("avgEntryPrice")),
+            "exit_price": _float_or_none(row.get("avgExitPrice")),
+            "pnl": pnl,
+        })
+        running += pnl
+        peak = max(peak, running)
+        out["max_drawdown"] = max(float(out["max_drawdown"] or 0.0), peak - running)
+
+    trades = int(out["trades"] or 0)
+    if trades:
+        out["avg_pnl"] = float(out["realised_pnl"] or 0.0) / trades
+    if peak > 0:
+        out["max_drawdown_pct"] = float(out["max_drawdown"] or 0.0) / peak * 100.0
+    recent.sort(key=lambda r: r.get("ts") or "", reverse=True)
+    out["recent_trades"] = recent[:20]
+    return out
+
+
+def _closed_pnl_direction(side: Any) -> str | None:
+    text = str(side or "").lower()
+    if text == "buy":
+        return "SHORT"
+    if text == "sell":
+        return "LONG"
+    return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if out > 0 else None
+
+
+def _float_or_zero(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _is_fatal_reason(reason: str | None) -> bool:

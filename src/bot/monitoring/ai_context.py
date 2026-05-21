@@ -77,7 +77,24 @@ def latest_log(log_dir: Path, pattern: str = "*.log") -> Path:
     candidates = [p for p in log_dir.glob(pattern) if p.is_file()]
     if not candidates:
         raise FileNotFoundError(f"No log files match {pattern!r} under {log_dir}")
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in candidates:
+        if _has_bot_event(path):
+            return path
+    return candidates[0]
+
+
+def _has_bot_event(path: Path, *, max_lines: int = 200) -> bool:
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f):
+                if i >= max_lines:
+                    return False
+                if parse_log_line(line) is not None:
+                    return True
+    except OSError:
+        return False
+    return False
 
 
 def strip_ansi(line: str) -> str:

@@ -32,6 +32,22 @@ def render(result: BacktestResult) -> str:
     lines.append(f"worst unreal.  : {result.worst_unrealized_loss:.4f} USDT")
     lines.append(f"recovery time  : {result.time_in_recovery / 3600.0:.2f} h")
     lines.append(f"open exposure  : {result.final_open_exposure:.4f} USDT")
+    cfg = getattr(result, "execution_config", None)
+    stats = getattr(result, "execution_stats", None)
+    if cfg is not None and stats is not None:
+        lines.append(f"execution      : {cfg.mode}")
+        if cfg.mode == "realistic":
+            lines.append(
+                "exec params    : "
+                f"lat={cfg.latency_seconds:g}s cancel={cfg.cancel_delay_seconds:g}s "
+                f"slip={cfg.slippage_bps:g}bps pass={cfg.pass_through_bps:g}bps"
+            )
+        lines.append(
+            "exec stats     : "
+            f"accepted={stats.accepted_orders} rejected={stats.rejected_orders} "
+            f"partial={stats.partial_fills} cancel_race={stats.cancel_race_fills} "
+            f"dust={stats.dust_rejected} slip_cost={stats.slippage_cost:.4f}"
+        )
     lines.append("")
 
     # Per-symbol breakdown

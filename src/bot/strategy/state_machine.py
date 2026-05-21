@@ -24,6 +24,9 @@ class CandleClose:
     timestamp: float
     close_price: float
     signal_direction: Direction | None = None  # None = no signal
+    notional_scale: float = 1.0
+    allow_new_position: bool = True
+    allow_layering: bool = True
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,7 @@ class EntryFilled:
     qty: float
     price: float
     timestamp: float
+    side: Side | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,23 @@ class OrderRejected:
     link_id: str
     purpose: OrderPurpose
     timestamp: float
+    reason: str | None = None
+
+
+_DUST_REJECTION_PREFIXES = ("notional_below_min", "qty_below_min")
+_DUST_REJECTION_SUBSTRINGS = (
+    "errcode: 110017",
+    "orderqty will be truncated to zero",
+)
+
+
+def _is_dust_rejection(reason: str | None) -> bool:
+    if not reason:
+        return False
+    normalized = reason.strip().strip("'\"").lower()
+    return normalized.startswith(_DUST_REJECTION_PREFIXES) or any(
+        text in normalized for text in _DUST_REJECTION_SUBSTRINGS
+    )
 
 
 @dataclass(frozen=True)
@@ -185,6 +206,10 @@ def _qty(notional: float, price: float) -> float:
     return notional / price
 
 
+def _entry_notional(params: Params, event: CandleClose) -> float:
+    return params.notional_usd * max(0.0, event.notional_scale)
+
+
 def _link(symbol: str, side: Side, purpose: OrderPurpose, ts: float, seq: int = 0) -> str:
     # Deterministic, replayable. Real adapter swaps the suffix for a ULID.
     return f"{symbol}-{side.value}-{purpose.value}-{int(ts)}-{seq}"
@@ -213,6 +238,8 @@ def step(ctx: Context, event: Event, params: Params, *, link_id_factory=None) ->
         return _from_in_position(ctx, event, params, factory)
     if ctx.state is State.MERGE_PENDING:
         return _from_merge_pending(ctx, event, params, factory)
+    if ctx.state is State.DUST_STRANDED:
+        return _from_dust_stranded(ctx, event, params, factory)
     if ctx.state is State.HALTED:
         # Halted is a terminal "no new entries" mode; let TPs resolve naturally.
         # We model HALTED as just the `halted` flag in other states; reaching
@@ -224,11 +251,11 @@ def step(ctx: Context, event: Event, params: Params, *, link_id_factory=None) ->
 
 def _from_idle(ctx, event, params, factory) -> Decision:
     if isinstance(event, CandleClose):
-        if event.signal_direction is None or ctx.halted:
+        if event.signal_direction is None or ctx.halted or not event.allow_new_position:
             return Decision(ctx, ())
         direction = event.signal_direction
         price = _entry_price(event.close_price, direction, params.entry_offset_bps)
-        qty = _qty(params.notional_usd, price)
+        qty = _qty(_entry_notional(params, event), price)
         link = factory(ctx.symbol, direction.entry_side, OrderPurpose.ENTRY, event.timestamp)
         new_ctx = ctx.with_(
             state=State.ENTRY_PENDING,
@@ -236,6 +263,25 @@ def _from_idle(ctx, event, params, factory) -> Decision:
             pending_entry_link_id=link,
         )
         return Decision(new_ctx, (PlaceEntry(direction, price, qty, link),))
+    if isinstance(event, EntryFilled) and event.side is not None:
+        # A stale remainder can fill after a partial entry's TP already
+        # flattened the first piece. Treat it as a real position, not noise.
+        direction = Direction.LONG if event.side is Side.BUY else Direction.SHORT
+        tp_price = _tp_price(event.price, direction, params.tp_offset_bps)
+        tp_link = factory(ctx.symbol, direction.tp_side, OrderPurpose.TP, event.timestamp)
+        new_ctx = ctx.with_(
+            state=State.IN_POSITION_TP_PENDING,
+            direction=direction,
+            position_size=event.qty,
+            bep=event.price,
+            first_fill_ts=event.timestamp,
+            pending_entry_link_id=None,
+        )
+        deadline = event.timestamp + params.merge_timer_seconds
+        return Decision(
+            new_ctx,
+            (PlaceTP(direction, tp_price, event.qty, tp_link), StartMergeTimer(deadline)),
+        )
     # Stray fills/timer events ignored from IDLE.
     return Decision(ctx, ())
 
@@ -277,12 +323,12 @@ def _from_entry_pending(ctx, event, params, factory) -> Decision:
         if ctx.pending_entry_link_id:
             actions.append(CancelEntry(ctx.pending_entry_link_id))
         # Re-evaluate signal on this candle close.
-        if event.signal_direction is None or ctx.halted:
+        if event.signal_direction is None or ctx.halted or not event.allow_new_position:
             new_ctx = ctx.with_(state=State.IDLE, direction=None, pending_entry_link_id=None)
             return Decision(new_ctx, tuple(actions))
         direction = event.signal_direction
         price = _entry_price(event.close_price, direction, params.entry_offset_bps)
-        qty = _qty(params.notional_usd, price)
+        qty = _qty(_entry_notional(params, event), price)
         link = factory(ctx.symbol, direction.entry_side, OrderPurpose.ENTRY, event.timestamp)
         actions.append(PlaceEntry(direction, price, qty, link))
         new_ctx = ctx.with_(direction=direction, pending_entry_link_id=link)
@@ -296,7 +342,11 @@ def _from_in_position(ctx, event, params, factory) -> Decision:
     assert direction is not None, "IN_POSITION_TP_PENDING without direction"
 
     if isinstance(event, TPFilled):
-        # Position flat (we don't model partial TPs in v1).
+        if event.qty < ctx.position_size:
+            return Decision(
+                ctx.with_(position_size=max(0.0, ctx.position_size - event.qty)),
+                (),
+            )
         new_ctx = ctx.with_(
             state=State.IDLE,
             direction=None,
@@ -353,8 +403,10 @@ def _from_in_position(ctx, event, params, factory) -> Decision:
             return Decision(new_ctx, tuple(actions))
         if event.signal_direction is not direction:
             return Decision(new_ctx, tuple(actions))
+        if not event.allow_layering:
+            return Decision(new_ctx, tuple(actions))
         price = _entry_price(event.close_price, direction, params.entry_offset_bps)
-        qty = _qty(params.notional_usd, price)
+        qty = _qty(_entry_notional(params, event), price)
         link = factory(ctx.symbol, direction.entry_side, OrderPurpose.ENTRY, event.timestamp)
         actions.append(PlaceEntry(direction, price, qty, link))
         new_ctx = new_ctx.with_(pending_entry_link_id=link)
@@ -363,6 +415,8 @@ def _from_in_position(ctx, event, params, factory) -> Decision:
     if isinstance(event, OrderRejected):
         if event.purpose is OrderPurpose.ENTRY:
             return Decision(ctx.with_(pending_entry_link_id=None), ())
+        if event.purpose is OrderPurpose.TP and _is_dust_rejection(event.reason):
+            return Decision(ctx.with_(state=State.DUST_STRANDED), ())
         return Decision(ctx, ())
 
     return Decision(ctx, ())
@@ -373,6 +427,11 @@ def _from_merge_pending(ctx, event, params, factory) -> Decision:
     assert direction is not None, "MERGE_PENDING without direction"
 
     if isinstance(event, TPFilled):
+        if event.qty < ctx.position_size:
+            return Decision(
+                ctx.with_(position_size=max(0.0, ctx.position_size - event.qty)),
+                (),
+            )
         new_ctx = ctx.with_(
             state=State.IDLE,
             direction=None,
@@ -410,11 +469,60 @@ def _from_merge_pending(ctx, event, params, factory) -> Decision:
         return Decision(ctx, ())
 
     if isinstance(event, OrderRejected):
-        # If the merge itself was rejected, retry by re-emitting placement.
+        # If the merge itself was rejected, retry by re-emitting placement —
+        # unless the rejection means the remainder is dust (below exchange
+        # min notional/qty). In that case, no exit order can be placed, so
+        # park the position in DUST_STRANDED for manual cleanup.
         if event.purpose is OrderPurpose.MERGE:
+            if _is_dust_rejection(event.reason):
+                return Decision(ctx.with_(state=State.DUST_STRANDED), ())
             merge_price = _tp_price(ctx.bep, direction, params.tp_offset_bps)
             merge_link = factory(ctx.symbol, direction.tp_side, OrderPurpose.MERGE, event.timestamp)
             return Decision(ctx, (PlaceMergeTP(direction, merge_price, ctx.position_size, merge_link),))
         return Decision(ctx, ())
 
+    return Decision(ctx, ())
+
+
+def _from_dust_stranded(ctx, event, params, factory) -> Decision:
+    direction = ctx.direction
+    assert direction is not None, "DUST_STRANDED without direction"
+
+    if isinstance(event, TPFilled):
+        if event.qty < ctx.position_size:
+            return Decision(
+                ctx.with_(position_size=max(0.0, ctx.position_size - event.qty)),
+                (),
+            )
+        # Operator (or anything) closed the position externally; recycle to IDLE.
+        new_ctx = ctx.with_(
+            state=State.IDLE,
+            direction=None,
+            position_size=0.0,
+            bep=0.0,
+            first_fill_ts=None,
+            pending_entry_link_id=None,
+        )
+        return Decision(new_ctx, (ClearMergeTimer(),))
+
+    if isinstance(event, EntryFilled):
+        # A new fill grew the position above dust; re-arm the merge.
+        total = ctx.position_size + event.qty
+        if total <= 0:
+            return Decision(ctx, ())
+        new_bep = (ctx.bep * ctx.position_size + event.price * event.qty) / total
+        merge_price = _tp_price(new_bep, direction, params.tp_offset_bps)
+        merge_link = factory(ctx.symbol, direction.tp_side, OrderPurpose.MERGE, event.timestamp)
+        new_ctx = ctx.with_(
+            state=State.MERGE_PENDING,
+            position_size=total,
+            bep=new_bep,
+            pending_entry_link_id=None,
+        )
+        return Decision(
+            new_ctx,
+            (CancelAllTPs(), PlaceMergeTP(direction, merge_price, total, merge_link)),
+        )
+
+    # Ignore everything else: candle closes, merge-timer events, repeated rejections.
     return Decision(ctx, ())

@@ -1,0 +1,60 @@
+sizing:
+  margin_usd: 25
+  leverage: 3
+
+offsets:
+  entry_offset_bps: 5
+  tp_offset_bps: 75
+
+merge_timer:
+  seconds: 1800
+  policy: first_fill
+
+fees:
+  maker_bps: -1.0
+  taker_bps: 5.5
+
+risk:
+  max_notional_per_symbol_usd: 300
+  max_notional_account_usd: 600
+  max_consecutive_losses: 3
+  cooldown_minutes: 120
+  daily_loss_limit_usd: 50
+
+account:
+  initial_equity: 1000
+  margin_mode: cross
+
+liquidation:
+  enabled: true
+  maintenance_margin_rate: 0.005
+  near_liq_buffer_pct: 10
+  funding_stress_bps: 0
+
+optimizer:
+  safety_gates:
+    reject_liquidated: true
+    reject_near_liquidation: true
+    max_drawdown_pct: 15
+    max_final_open_exposure_usd: 600
+
+regime_router:
+  enabled: false
+  no_trade_on_unsafe: true
+
+dust_cleanup:
+  enabled: true
+  max_attempts: 3
+  retry_seconds: 300
+
+signal:
+  engine: trend_filter
+  params:
+    inner: grid
+    inner_anchor_period: 200
+    inner_entry_bps: 50
+    inner_step_bps: 25
+    max_trend_bps: 20
+
+loop:
+  reconcile_every_seconds: 30

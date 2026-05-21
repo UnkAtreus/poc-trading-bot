@@ -1,122 +1,169 @@
 {% extends "base.html" %}
 {% block content %}
-{% set m = status.monitor or {} %}
-{% set wallet = m.get('wallet') or {} %}
+{% set s = summary or {} %}
 
-{% if status.settings.mode == 'mainnet' %}
-<div class="banner danger">MAINNET MODE — orders here use real funds.</div>
+{% if s.mode == 'mainnet' %}
+<div class="banner danger">MAINNET MODE - orders here use real funds.</div>
 {% endif %}
+
+<section class="profile-strip">
+  <div class="profile-main">
+    <span class="metric-label">Running profile</span>
+    <strong>{{ s.profile.name or "default" }}</strong>
+    <span class="subtle">{{ s.profile.config_dir or "config" }} · {{ s.profile.source or "config" }}</span>
+  </div>
+  <div class="profile-stat">
+    <span class="metric-label">Symbols</span>
+    <div class="symbol-chip-row">
+      {% for sym in s.active_symbols or [] %}
+        <span class="symbol-chip">{{ sym }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="profile-stat">
+    <span class="metric-label">Order notional</span>
+    <strong>{{ "%.2f"|format(s.notional_per_order or 0) }}</strong>
+    <span class="subtle">{{ "%.2f"|format(s.margin_usd or 0) }} margin · {{ "%.0fx"|format(s.leverage or 0) }}</span>
+  </div>
+  <div class="profile-stat">
+    <span class="metric-label">Risk caps</span>
+    <strong>{{ "%.0f"|format(s.max_notional_account or 0) }}</strong>
+    <span class="subtle">{{ "%.0f"|format(s.max_notional_per_symbol or 0) }} per symbol</span>
+  </div>
+  <div class="profile-stat">
+    <span class="metric-label">Dust cleanup</span>
+    <strong>{{ "on" if s.dust_cleanup_enabled else "off" }}</strong>
+  </div>
+</section>
 
 <section class="metric-grid" data-refresh="status">
   <div class="metric">
-    <div class="metric-label">Severity</div>
-    <div class="metric-value pill severity-{{ (m.severity or 'unknown')|lower }}">{{ m.severity or "n/a" }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Bot alive</div>
-    <div class="metric-value">{{ "yes" if m.bot_alive else "no" }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Heartbeat age</div>
-    <div class="metric-value">{% if m.heartbeat_age_seconds %}{{ "%.0f"|format(m.heartbeat_age_seconds) }} s{% else %}n/a{% endif %}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Kill switch</div>
-    <div class="metric-value">{{ "ACTIVE" if status.kill_active else "off" }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Mode</div>
-    <div class="metric-value">{{ status.settings.mode }}</div>
-  </div>
-  <div class="metric">
     <div class="metric-label">Total equity</div>
-    <div class="metric-value">{{ "%.2f"|format(wallet.total_equity or 0) }}</div>
+    <div class="metric-value">{{ "%.2f"|format(s.total_equity or 0) }}
+      <span class="subtle" style="font-size:12px;font-weight:500;margin-left:6px">
+        avail {{ "%.2f"|format(s.available or 0) }}
+      </span>
+    </div>
   </div>
   <div class="metric">
-    <div class="metric-label">Available</div>
-    <div class="metric-value">{{ "%.2f"|format(wallet.total_available_balance or 0) }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">USDT equity</div>
-    <div class="metric-value">{{ "%.2f"|format(wallet.usdt_equity or 0) }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Daily closed PnL</div>
-    <div class="metric-value {{ 'pos' if (m.daily_closed_pnl or 0) > 0 else ('neg' if (m.daily_closed_pnl or 0) < 0 else '') }}">
-      {{ "%.2f"|format(m.daily_closed_pnl or 0) }}
+    <div class="metric-label">Daily PnL</div>
+    <div class="metric-value {{ 'pos' if (s.daily_pnl or 0) > 0 else ('neg' if (s.daily_pnl or 0) < 0 else '') }}">
+      {{ "%+.2f"|format(s.daily_pnl or 0) }}
     </div>
   </div>
   <div class="metric">
     <div class="metric-label">Unrealised PnL</div>
-    <div class="metric-value {{ 'pos' if (wallet.usdt_unrealised_pnl or 0) > 0 else ('neg' if (wallet.usdt_unrealised_pnl or 0) < 0 else '') }}">
-      {{ "%.2f"|format(wallet.usdt_unrealised_pnl or 0) }}
+    <div class="metric-value {{ 'pos' if (s.unrealised_pnl or 0) > 0 else ('neg' if (s.unrealised_pnl or 0) < 0 else '') }}">
+      {{ "%+.2f"|format(s.unrealised_pnl or 0) }}
     </div>
   </div>
   <div class="metric">
     <div class="metric-label">Open positions</div>
-    <div class="metric-value">{{ (m.positions or [])|length }}</div>
+    <div class="metric-value">{{ s.open_positions or 0 }}
+      <span class="subtle" style="font-size:12px;font-weight:500;margin-left:6px">
+        {{ s.longs or 0 }} L · {{ s.shorts or 0 }} S
+      </span>
+    </div>
   </div>
   <div class="metric">
-    <div class="metric-label">Open orders</div>
-    <div class="metric-value">{{ (m.open_orders or [])|length }}</div>
+    <div class="metric-label">Severity</div>
+    <div class="metric-value">
+      <span class="pill severity-{{ (s.severity or 'unknown')|lower }}">{{ s.severity or 'n/a' }}</span>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Mode</div>
+    <div class="metric-value">{{ s.mode or 'n/a' }}
+      {% if s.kill_active %}<span class="pill danger" style="margin-left:6px">KILL</span>{% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="card highlight-row">
+  <div class="highlight">
+    <span class="metric-label">Peak equity</span>
+    <strong>{{ "%.2f"|format(s.peak_equity or 0) }}</strong>
+  </div>
+  <div class="highlight">
+    <span class="metric-label">24h change</span>
+    <strong class="{{ 'pos' if (s.equity_change_24h or 0) > 0 else ('neg' if (s.equity_change_24h or 0) < 0 else '') }}">
+      {{ "%+.2f"|format(s.equity_change_24h or 0) }}
+    </strong>
+    <span class="subtle">({{ "%+.2f"|format(s.equity_change_24h_pct or 0) }}%)</span>
+  </div>
+  <div class="highlight">
+    <span class="metric-label">Current drawdown</span>
+    <strong class="{{ 'neg' if (s.current_drawdown or 0) > 0 else '' }}">{{ "%.2f"|format(s.current_drawdown or 0) }}</strong>
+    <span class="subtle">({{ "%.2f"|format(s.current_drawdown_pct or 0) }}%)</span>
+  </div>
+  <div class="highlight">
+    <span class="metric-label">Max drawdown</span>
+    <strong class="{{ 'neg' if (s.max_drawdown_pct or 0) > 0 else '' }}">{{ "%.2f"|format(s.max_drawdown or 0) }}</strong>
+    <span class="subtle">({{ "%.2f"|format(s.max_drawdown_pct or 0) }}%)</span>
+  </div>
+  <div class="highlight">
+    <span class="metric-label">Open notional</span>
+    <strong>{{ "%.2f"|format(s.open_notional or 0) }}</strong>
+  </div>
+  <div class="highlight">
+    <span class="metric-label">Snapshots</span>
+    <strong>{{ s.snapshots or 0 }}</strong>
   </div>
 </section>
 
 <section class="card">
-  <h2>Recent daily PnL</h2>
-  <div class="chart-wrap"><canvas data-chart="daily-pnl" data-endpoint="/api/equity-history" height="180"></canvas></div>
-  <p class="subtle">Auto-populated from <code>logs/live_monitor_history.jsonl</code> (one row per monitor regeneration).</p>
-</section>
-
-<section class="card">
-  <h2>Current bot states</h2>
-  {% if m.current_states %}
-    <table class="data">
-      <thead><tr><th>Symbol</th><th>State</th></tr></thead>
-      <tbody>
-        {% for sym, st in m.current_states.items()|sort %}
-          <tr><td>{{ sym }}</td><td>{{ st }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="card-head">
+    <h2>Equity &amp; drawdown</h2>
+    <p class="subtle">Line = total equity · area = running drawdown from peak.</p>
+  </div>
+  {% if s.snapshots %}
+    <div class="chart-wrap"><canvas data-chart="equity-drawdown" data-endpoint="/api/balance-summary" height="260"></canvas></div>
   {% else %}
-    <p class="subtle">No heartbeat states found.</p>
+    <p class="subtle">No history yet. Click <em>Regenerate monitor</em> on the Alerts page to start collecting snapshots.</p>
   {% endif %}
 </section>
 
-<section class="card">
-  <h2>Issues</h2>
-  {% if m.issues %}
-    <ul class="issues">
-      {% for issue in m.issues %}
-        <li class="severity-{{ issue.severity|lower }}">
-          <span class="pill severity-{{ issue.severity|lower }}">{{ issue.severity }}</span>
-          <code>{{ issue.code }}</code>{% if issue.symbol %} <strong>{{ issue.symbol }}</strong>{% endif %} — {{ issue.message }}
-        </li>
-      {% endfor %}
-    </ul>
-  {% else %}
-    <p class="subtle">No issues reported.</p>
-  {% endif %}
-</section>
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head">
+      <h2>Daily realised PnL</h2>
+      <form method="post" action="/actions/regenerate-monitor">
+        <input type="hidden" name="skip_process_check" value="true">
+        <button type="submit" class="outline">Update daily</button>
+      </form>
+    </div>
+    {% if s.snapshots %}
+      <div class="chart-wrap"><canvas data-chart="daily-realized-bar" data-endpoint="/api/balance-summary" height="220"></canvas></div>
+    {% else %}
+      <p class="subtle">No snapshots yet.</p>
+    {% endif %}
+  </section>
+  <section class="card">
+    <h2>Positions notional split</h2>
+    {% if s.open_positions %}
+      <div class="chart-wrap"><canvas data-chart="positions-pie" data-endpoint="/api/positions-breakdown" height="220"></canvas></div>
+    {% else %}
+      <p class="subtle">No open positions.</p>
+    {% endif %}
+  </section>
+</div>
 
-<section class="card actions-card">
-  <h2>Safe actions</h2>
-  <div class="actions-grid">
-    <form method="post" action="/actions/regenerate-monitor">
-      <button type="submit" class="outline">Regenerate monitor</button>
-    </form>
-    <form method="post" action="/actions/regenerate-ai">
-      <button type="submit" class="outline">Regenerate AI context</button>
-    </form>
-    <form method="post" action="/actions/kill" onsubmit="return confirmTyped(this, 'KILL');">
-      <input type="text" name="confirm" placeholder="type KILL" autocomplete="off" style="width:120px">
-      <button type="submit" class="danger">Create kill</button>
-    </form>
-    <form method="post" action="/actions/clear-kill" onsubmit="return confirmTyped(this, 'CLEAR');">
-      <input type="text" name="confirm" placeholder="type CLEAR" autocomplete="off" style="width:120px">
-      <button type="submit" class="outline">Clear kill</button>
-    </form>
+<section class="card highlight-row">
+  <div class="highlight">
+    <span class="metric-label">Trading</span>
+    <a href="/trading">Open positions &amp; orders &rsaquo;</a>
+  </div>
+  <div class="highlight">
+    <span class="metric-label">Balance</span>
+    <a href="/balance">Equity &amp; drawdown &rsaquo;</a>
+  </div>
+  <div class="highlight">
+    <span class="metric-label">Alerts</span>
+    <a href="/alerts">Live alerts &amp; logs &rsaquo;</a>
+  </div>
+  <div class="highlight">
+    <span class="metric-label">Backtests</span>
+    <a href="/backtests">Reports &amp; jobs &rsaquo;</a>
   </div>
 </section>
 {% endblock %}

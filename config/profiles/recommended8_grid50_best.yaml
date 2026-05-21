@@ -1,0 +1,33 @@
+name: recommended8_grid50_best
+created_at: 2026-05-21
+description: >
+  Recommended 8-symbol basket for the current grid50_best bot profile.
+  This file documents a reusable profile without changing config/symbols.yaml.
+
+inherits:
+  bot_config: ../bot.yaml
+  execution_model: realistic
+  execution_profile: mainnet-like
+
+symbols:
+  active:
+    - UNIUSDT
+    - ETHUSDT
+    - XLMUSDT
+    - LTCUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - XRPUSDT
+    - LINKUSDT
+
+backtest_defaults:
+  with_risk: true
+  by_month: true
+  kline_workers: 1
+  start: 2022-05-09
+  end: 2026-05-21
+
+notes:
+  - Ranked from prior grid50_best backtests and current Bybit linear instrument status.
+  - MATICUSDT is excluded because the Bybit linear contract is closed.
+  - XMRUSDT is excluded from core because it can remain merge-pending for long periods.

@@ -1,7 +1,6 @@
 # Live Alerts
 
-- Generated UTC: `2026-05-13T02:43:49.033464+00:00`
-- Severity: `CRITICAL`
+- Generated UTC: `2026-05-21T10:25:26.446685+00:00`
+- Severity: `OK`
 
-- `CRITICAL` `missing_reduce_only_exit` `XRPUSDT`: Open exchange position has no reduce-only TP/exit order
-- `CRITICAL` `repeated_log_failure`: merge_tp_place_rejected occurred 29 times in the recent monitor window
+- No alerts.
