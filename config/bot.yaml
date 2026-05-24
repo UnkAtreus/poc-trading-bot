@@ -44,7 +44,7 @@ regime_router:
   no_trade_on_unsafe: true
 
 dust_cleanup:
-  enabled: false
+  enabled: true
   max_attempts: 3
   retry_seconds: 300
 

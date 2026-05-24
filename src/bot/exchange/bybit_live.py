@@ -37,6 +37,26 @@ log = get_logger(__name__)
 CATEGORY = "linear"
 
 
+def _record_rest_latency(op: str, t0: float, **fields: Any) -> None:
+    """Record REST round-trip latency. Never raises — instrumentation must not break orders."""
+    try:
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        log.info("bybit.rest.latency", op=op, ms=round(elapsed_ms, 2), **fields)
+    except Exception:
+        pass
+
+
+def _record_ws_event_age(kind: str, server_ts_ms: Any, **fields: Any) -> None:
+    """Record WS event age = local_recv - server_emit. Never raises."""
+    try:
+        if not server_ts_ms:
+            return
+        age_ms = (time.time() * 1000.0) - float(server_ts_ms)
+        log.info("bybit.ws.event_age", kind=kind, ms=round(age_ms, 2), **fields)
+    except Exception:
+        pass
+
+
 def _floor_to_step(value: Decimal, step: Decimal) -> Decimal:
     return (value / step).to_integral_value(rounding=ROUND_DOWN) * step
 
@@ -45,10 +65,14 @@ def _format_decimal(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
-# Public 1m klines push at least once per minute. Private executions are
-# sparse, so we treat them as stale only after several minutes of silence.
+# Public 1m klines push at least once per minute, so silence past
+# PUBLIC_WS_STALE_SECONDS is treated as a real socket problem (status
+# becomes "stale" and the public loop reconnects). Private executions are
+# sparse and quiet account stretches are normal: while the thread is alive,
+# we surface that as "connected_idle" rather than "stale" to avoid false
+# alarms on flat trading days.
 PUBLIC_WS_STALE_SECONDS = 120.0
-PRIVATE_WS_STALE_SECONDS = 360.0
+PRIVATE_WS_STALE_SECONDS = 900.0
 WS_CONNECT_TIMEOUT_SECONDS = 15.0
 WS_HEALTH_CHECK_SECONDS = 30.0
 WS_RECONNECT_BASE_SECONDS = 2.0
@@ -149,19 +173,45 @@ def _summarize_ws_status(
     private_last_msg_ts: float | None,
     public_symbols: list[str],
     private_subscribed: bool,
+    public_thread_alive: bool = True,
+    private_thread_alive: bool = True,
 ) -> dict:
-    def one(last: float | None, subscribed: bool, stale_after: float) -> dict:
+    def one(
+        last: float | None,
+        subscribed: bool,
+        stale_after: float,
+        thread_alive: bool,
+        allow_idle: bool,
+    ) -> dict:
         if not subscribed:
             return {"status": "disabled", "last_msg_age_seconds": None}
         if last is None:
             return {"status": "connecting", "last_msg_age_seconds": None}
         age = max(0.0, now_ts - last)
-        status = "connected" if age <= stale_after else "stale"
-        return {"status": status, "last_msg_age_seconds": age}
+        if not thread_alive:
+            return {"status": "stale", "last_msg_age_seconds": age}
+        if age <= stale_after:
+            return {"status": "connected", "last_msg_age_seconds": age}
+        return {
+            "status": "connected_idle" if allow_idle else "stale",
+            "last_msg_age_seconds": age,
+        }
 
-    public = one(public_last_msg_ts, bool(public_symbols), PUBLIC_WS_STALE_SECONDS)
+    public = one(
+        public_last_msg_ts,
+        bool(public_symbols),
+        PUBLIC_WS_STALE_SECONDS,
+        public_thread_alive,
+        allow_idle=False,
+    )
     public["subscribed_symbols"] = list(public_symbols)
-    private = one(private_last_msg_ts, private_subscribed, PRIVATE_WS_STALE_SECONDS)
+    private = one(
+        private_last_msg_ts,
+        private_subscribed,
+        PRIVATE_WS_STALE_SECONDS,
+        private_thread_alive,
+        allow_idle=True,
+    )
     private["subscribed"] = private_subscribed
     return {"public": public, "private": private}
 
@@ -204,6 +254,9 @@ class BybitLive(ExchangeAdapter):
         self._instruments: dict[str, Instrument] = {}
         self._limiter = AsyncLimiter(max_rate=rps, time_period=1.0)
         self._stopping = False
+        # link_id -> (expected_price, side) for slip measurement.
+        # Populated on place_limit, read on execution events, cleaned up on terminal order status.
+        self._expected_price: dict[str, tuple[float, Side]] = {}
 
     def ws_status(self) -> dict:
         return _summarize_ws_status(
@@ -212,7 +265,20 @@ class BybitLive(ExchangeAdapter):
             private_last_msg_ts=self._private_last_msg_ts,
             public_symbols=self._public_symbols,
             private_subscribed=self._private_subscribed,
+            public_thread_alive=self._ws_thread_alive(self._public_ws),
+            private_thread_alive=self._ws_thread_alive(self._private_ws),
         )
+
+    @staticmethod
+    def _ws_thread_alive(ws: Any) -> bool:
+        if ws is None:
+            return False
+        thread = getattr(ws, "wst", None)
+        if thread is None:
+            # No background thread attribute yet (e.g. just constructed);
+            # assume alive until proven otherwise.
+            return True
+        return bool(thread.is_alive())
 
     # ---- ExchangeAdapter ----
 
@@ -279,6 +345,7 @@ class BybitLive(ExchangeAdapter):
             return OrderAck(link_id=link_id, order_id="", accepted=False, reason=reason)
 
         async with self._limiter:
+            t0 = time.perf_counter()
             try:
                 r = await asyncio.to_thread(
                     self._http.place_order,
@@ -293,10 +360,18 @@ class BybitLive(ExchangeAdapter):
                     orderLinkId=link_id,
                 )
             except Exception as e:
+                _record_rest_latency("place_order", t0, symbol=symbol, link_id=link_id, ok=False)
                 log.warning("place_order_failed", symbol=symbol, link_id=link_id, error=str(e))
                 return OrderAck(link_id=link_id, order_id="", accepted=False, reason=str(e))
+        _record_rest_latency(
+            "place_order", t0, symbol=symbol, link_id=link_id, ok=(r.get("retCode") == 0)
+        )
         if r.get("retCode") != 0:
             return OrderAck(link_id=link_id, order_id="", accepted=False, reason=r.get("retMsg"))
+        try:
+            self._expected_price[link_id] = (float(price_str), side)
+        except (TypeError, ValueError):
+            pass
         return OrderAck(link_id=link_id, order_id=r["result"]["orderId"], accepted=True)
 
     async def close_position_market(self, symbol: str, side: Side, link_id: str) -> OrderAck:
@@ -307,6 +382,7 @@ class BybitLive(ExchangeAdapter):
         as dust.
         """
         async with self._limiter:
+            t0 = time.perf_counter()
             try:
                 r = await asyncio.to_thread(
                     self._http.place_order,
@@ -320,6 +396,9 @@ class BybitLive(ExchangeAdapter):
                     orderLinkId=link_id,
                 )
             except Exception as e:
+                _record_rest_latency(
+                    "close_position_market", t0, symbol=symbol, link_id=link_id, ok=False
+                )
                 log.warning(
                     "close_position_market_failed",
                     symbol=symbol,
@@ -328,6 +407,9 @@ class BybitLive(ExchangeAdapter):
                     error=str(e),
                 )
                 return OrderAck(link_id=link_id, order_id="", accepted=False, reason=str(e))
+        _record_rest_latency(
+            "close_position_market", t0, symbol=symbol, link_id=link_id, ok=(r.get("retCode") == 0)
+        )
         if r.get("retCode") != 0:
             return OrderAck(link_id=link_id, order_id="", accepted=False, reason=r.get("retMsg"))
         return OrderAck(
@@ -338,28 +420,36 @@ class BybitLive(ExchangeAdapter):
 
     async def cancel(self, symbol, link_id) -> None:
         async with self._limiter:
+            t0 = time.perf_counter()
             try:
                 await asyncio.to_thread(
                     self._http.cancel_order,
                     category=CATEGORY, symbol=symbol, orderLinkId=link_id,
                 )
+                _record_rest_latency("cancel_order", t0, symbol=symbol, link_id=link_id, ok=True)
             except Exception as e:
+                _record_rest_latency("cancel_order", t0, symbol=symbol, link_id=link_id, ok=False)
                 log.warning("cancel_failed", symbol=symbol, link_id=link_id, error=str(e))
 
     async def cancel_all(self, symbol) -> None:
         async with self._limiter:
+            t0 = time.perf_counter()
             try:
                 await asyncio.to_thread(
                     self._http.cancel_all_orders, category=CATEGORY, symbol=symbol
                 )
+                _record_rest_latency("cancel_all_orders", t0, symbol=symbol, ok=True)
             except Exception as e:
+                _record_rest_latency("cancel_all_orders", t0, symbol=symbol, ok=False)
                 log.warning("cancel_all_failed", symbol=symbol, error=str(e))
 
     async def get_position(self, symbol) -> Position:
         async with self._limiter:
+            t0 = time.perf_counter()
             r = await asyncio.to_thread(
                 self._http.get_positions, category=CATEGORY, symbol=symbol
             )
+            _record_rest_latency("get_positions", t0, symbol=symbol)
         lst = r.get("result", {}).get("list", [])
         if not lst:
             return Position(symbol=symbol, size=0.0, avg_price=0.0)
@@ -372,9 +462,11 @@ class BybitLive(ExchangeAdapter):
 
     async def get_open_orders(self, symbol) -> list[Order]:
         async with self._limiter:
+            t0 = time.perf_counter()
             r = await asyncio.to_thread(
                 self._http.get_open_orders, category=CATEGORY, symbol=symbol
             )
+            _record_rest_latency("get_open_orders", t0, symbol=symbol)
         out: list[Order] = []
         for o in r.get("result", {}).get("list", []):
             link = o.get("orderLinkId", "")
@@ -567,6 +659,7 @@ class BybitLive(ExchangeAdapter):
             for k in data:
                 if not k.get("confirm"):
                     continue
+                _record_ws_event_age("kline_confirm", k.get("end"), symbol=symbol)
                 self._put(self._kline_q, Candle(
                     symbol=symbol,
                     timestamp=int(k["end"]) / 1000.0,
@@ -594,6 +687,12 @@ class BybitLive(ExchangeAdapter):
                 }.get(status)
                 if mapped is None:
                     continue
+                _record_ws_event_age(
+                    "order", o.get("updatedTime"),
+                    symbol=o.get("symbol", ""), status=mapped,
+                )
+                if mapped in ("filled", "cancelled", "rejected"):
+                    self._expected_price.pop(o.get("orderLinkId", ""), None)
                 self._put(self._user_q, OrderEvent(
                     link_id=o.get("orderLinkId", ""),
                     symbol=o.get("symbol", ""),
@@ -608,18 +707,46 @@ class BybitLive(ExchangeAdapter):
         self._private_last_msg_ts = time.time()
         try:
             for x in msg.get("data") or []:
+                _record_ws_event_age(
+                    "execution", x.get("execTime"),
+                    symbol=x.get("symbol", ""), is_maker=x.get("isMaker", False),
+                )
+                link_id = x.get("orderLinkId", "")
+                fill_price = float(x["execPrice"])
+                side_str = x.get("side", "")
+                self._record_slip(link_id, fill_price, side_str, x.get("symbol", ""), x.get("isMaker", False))
                 self._put(self._user_q, ExecutionEvent(
-                    link_id=x.get("orderLinkId", ""),
+                    link_id=link_id,
                     symbol=x.get("symbol", ""),
-                    side=Side(x["side"]),
+                    side=Side(side_str),
                     qty=float(x["execQty"]),
-                    price=float(x["execPrice"]),
+                    price=fill_price,
                     timestamp=int(x.get("execTime", time.time() * 1000)) / 1000.0,
                     fee=float(x.get("execFee", 0) or 0),
                     is_maker=x.get("isMaker", False),
                 ))
         except Exception as e:
             log.warning("on_execution_msg_error", error=str(e))
+
+    def _record_slip(self, link_id: str, fill_price: float, side_str: str, symbol: str, is_maker: Any) -> None:
+        """Compute fill slip vs original expected price. Never raises."""
+        try:
+            entry = self._expected_price.get(link_id)
+            if entry is None:
+                return
+            expected, _stored_side = entry
+            if expected <= 0 or fill_price <= 0:
+                return
+            sign = 1 if side_str == "Buy" else -1
+            slip_bps = ((fill_price - expected) / expected) * 10000.0 * sign
+            log.info(
+                "bybit.fill.slip_bps",
+                link_id=link_id, symbol=symbol, side=side_str,
+                expected=round(expected, 8), fill=round(fill_price, 8),
+                bps=round(slip_bps, 3), is_maker=bool(is_maker),
+            )
+        except Exception:
+            pass
 
     def _on_position_msg(self, msg: dict[str, Any]) -> None:
         self._private_last_msg_ts = time.time()
@@ -628,6 +755,10 @@ class BybitLive(ExchangeAdapter):
                 size = float(p.get("size", 0) or 0)
                 if p.get("side") == "Sell":
                     size = -size
+                _record_ws_event_age(
+                    "position", p.get("updatedTime"),
+                    symbol=p.get("symbol", ""),
+                )
                 self._put(self._user_q, PositionEvent(
                     symbol=p.get("symbol", ""),
                     size=size,

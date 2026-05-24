@@ -1,10 +1,12 @@
 active:
-  - BTCUSDT
+  - UNIUSDT
   - ETHUSDT
-  - SOLUSDT
-  - XRPUSDT
-  - BNBUSDT
+  - XLMUSDT
   - LTCUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - LINKUSDT
 
 overrides:
   HYPEUSDT:

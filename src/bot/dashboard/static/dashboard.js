@@ -545,4 +545,115 @@
   if (document.getElementById("backtest-jobs")) {
     setInterval(refreshJobs, 3000);
   }
+
+  // Live latency widget on the overview page.
+  const latencyEl = document.querySelector("[data-latency-widget]");
+  if (latencyEl) {
+    const restBody = latencyEl.querySelector("[data-latency-rest]");
+    const wsBody = latencyEl.querySelector("[data-latency-ws]");
+    const sourceEl = latencyEl.querySelector("[data-latency-source]");
+    const updatedEl = latencyEl.querySelector("[data-latency-updated]");
+    const cellHTML = (val) => val == null ? "—" : Number(val).toLocaleString(undefined, { maximumFractionDigits: 1 });
+    const cls = (val, warn, danger) => {
+      if (val == null) return "";
+      if (val >= danger) return "neg";
+      if (val >= warn) return "warn";
+      return "pos";
+    };
+    const renderGroup = (tbody, data, warnP90, dangerP90) => {
+      const keys = Object.keys(data || {}).sort();
+      if (!keys.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="subtle">no samples yet</td></tr>';
+        return;
+      }
+      tbody.innerHTML = keys.map((key) => {
+        const s = data[key] || {};
+        return `<tr>
+          <td><code>${key}</code></td>
+          <td>${cellHTML(s.count)}</td>
+          <td>${cellHTML(s.p50)}</td>
+          <td class="${cls(s.p90, warnP90, dangerP90)}">${cellHTML(s.p90)}</td>
+          <td>${cellHTML(s.p99)}</td>
+          <td>${cellHTML(s.max)}</td>
+        </tr>`;
+      }).join("");
+    };
+    const refreshLatency = async () => {
+      try {
+        const res = await fetch("/api/latency?window=100", { headers: { Accept: "application/json" }});
+        if (!res.ok) return;
+        const data = await res.json();
+        if (sourceEl) sourceEl.textContent = data.source_log || "—";
+        if (updatedEl && data.updated_at) {
+          const t = new Date(data.updated_at);
+          updatedEl.textContent = "· updated " + t.toLocaleTimeString();
+        }
+        renderGroup(restBody, data.rest || {}, 200, 1000);
+        renderGroup(wsBody, data.ws || {}, 500, 1000);
+      } catch (err) {
+        console.warn("latency refresh failed", err);
+      }
+    };
+    refreshLatency();
+    setInterval(refreshLatency, 5000);
+  }
+
+  // Live fill-slippage widget.
+  const slipEl = document.querySelector("[data-slip-widget]");
+  if (slipEl) {
+    const sideBody = slipEl.querySelector("[data-slip-by-side]");
+    const symBody = slipEl.querySelector("[data-slip-by-symbol]");
+    const summaryEl = slipEl.querySelector("[data-slip-summary]");
+    const updatedEl = slipEl.querySelector("[data-slip-updated]");
+    const fmt = (val) => val == null ? "—" : Number(val).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    // Slip thresholds: positive = adverse. Sweep showed >=2 bps starts hurting, >=3 breaks the strategy.
+    const clsBps = (val) => {
+      if (val == null) return "";
+      if (val >= 3) return "neg";
+      if (val >= 1.5) return "warn";
+      if (val < 0) return "pos";
+      return "";
+    };
+    const renderRows = (tbody, data, keyLabel) => {
+      const keys = Object.keys(data || {}).sort();
+      if (!keys.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="subtle">no fills yet</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = keys.map((k) => {
+        const s = data[k] || {};
+        return `<tr>
+          <td><code>${k}</code></td>
+          <td>${fmt(s.count)}</td>
+          <td class="${clsBps(s.p50)}">${fmt(s.p50)}</td>
+          <td class="${clsBps(s.p90)}">${fmt(s.p90)}</td>
+          <td class="${clsBps(s.p99)}">${fmt(s.p99)}</td>
+          <td class="${clsBps(s.max)}">${fmt(s.max)}</td>
+          <td>${fmt(s.adverse_pct)}</td>
+        </tr>`;
+      }).join("");
+    };
+    const refreshSlip = async () => {
+      try {
+        const res = await fetch("/api/slip?window=200", { headers: { Accept: "application/json" }});
+        if (!res.ok) return;
+        const data = await res.json();
+        if (updatedEl && data.updated_at) {
+          const t = new Date(data.updated_at);
+          updatedEl.textContent = "· updated " + t.toLocaleTimeString();
+        }
+        if (summaryEl && data.all && data.all.count > 0) {
+          summaryEl.textContent = ` · all-fills n=${data.all.count}, p50=${fmt(data.all.p50)} bps, p90=${fmt(data.all.p90)} bps, adverse=${fmt(data.all.adverse_pct)}%`;
+        } else if (summaryEl) {
+          summaryEl.textContent = " · no fills observed yet";
+        }
+        renderRows(sideBody, data.by_side || {}, "side");
+        renderRows(symBody, data.by_symbol || {}, "symbol");
+      } catch (err) {
+        console.warn("slip refresh failed", err);
+      }
+    };
+    refreshSlip();
+    setInterval(refreshSlip, 5000);
+  }
 })();

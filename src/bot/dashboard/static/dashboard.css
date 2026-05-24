@@ -1366,3 +1366,24 @@ body.modal-open { overflow: hidden; }
     margin: 2px 0 0;
   }
 }
+
+.latency-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+@media (max-width: 700px) {
+  .latency-grid { grid-template-columns: 1fr; }
+}
+
+.latency-grid .data-table.compact { font-size: 13px; width: 100%; }
+.latency-grid .data-table.compact th,
+.latency-grid .data-table.compact td { padding: 4px 8px; text-align: right; }
+.latency-grid .data-table.compact th:first-child,
+.latency-grid .data-table.compact td:first-child { text-align: left; }
+.latency-grid .data-table.compact code { font-size: 12px; }
+
+.warn { color: hsl(var(--warning, 38 92% 50%)); }
+[data-latency-widget] [data-latency-updated] { margin-left: 6px; font-size: 12px; }

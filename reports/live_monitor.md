@@ -1,13 +1,13 @@
 # Live Monitor
 
-- Generated UTC: `2026-05-21T10:25:26.446685+00:00`
+- Generated UTC: `2026-05-24T08:27:39.495862+00:00`
 - Mode: `testnet`
 - Severity: `OK`
 - Kill triggered: `False`
-- Source log: `/Users/atreus/Desktop/work/sideproject/poc-trading-bot/logs/testnet_recommended8_20260521_162952.log`
+- Source log: `/Users/atreus/Desktop/work/sideproject/poc-trading-bot/logs/testnet_recommended8_20260524_151122.log`
 - Bot alive: `True`
-- Latest heartbeat: `2026-05-21T10:24:55.084402Z`
-- Heartbeat age seconds: `31.36`
+- Latest heartbeat: `2026-05-24T08:27:25.405953Z`
+- Heartbeat age seconds: `14.09`
 
 ## Issues
 
@@ -15,19 +15,19 @@
 
 ## Wallet
 
-- Total equity: `105564.88587468`
-- Total available balance: `105563.10454334`
-- USDT equity: `105663.48485395`
-- USDT unrealised PnL: `0.00000000`
-- Daily closed PnL: `462.80`
+- Total equity: `110067.94521426`
+- Total available balance: `110065.17738201`
+- USDT equity: `110188.49031754`
+- USDT unrealised PnL: `0.00560000`
+- Daily closed PnL: `-78.48`
 
 ## Positions
 
-- None.
+- `UNIUSDT` `Buy` size=`2.8` avg=`3.569` mark=`3.571` notional=`10.00` upnl=`0.0056`
 
 ## Open Orders
 
-- None.
+- `UNIUSDT` `Sell` purpose=`merge` qty=`2.8` price=`3.595` reduceOnly=`True` link=`UNIUSDT-S-merge-K6YYTJGJMR04DT0X`
 
 ## Current Bot States
 
@@ -36,6 +36,6 @@
 - `LINKUSDT`: `IDLE`
 - `LTCUSDT`: `IDLE`
 - `SOLUSDT`: `IDLE`
-- `UNIUSDT`: `IDLE`
+- `UNIUSDT`: `MERGE_PENDING`
 - `XLMUSDT`: `IDLE`
 - `XRPUSDT`: `IDLE`

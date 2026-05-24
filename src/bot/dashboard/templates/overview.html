@@ -111,6 +111,77 @@
   </div>
 </section>
 
+<section class="card" data-latency-widget>
+  <div class="card-head">
+    <h2>Live latency</h2>
+    <p class="subtle">
+      REST round-trip + WS event age, last 100 samples from
+      <code data-latency-source>—</code>.
+      Mainnet-like p90 budget: REST ≤ 200 ms, WS ≤ 500 ms. Conservative: 1000 ms.
+      <span class="subtle" data-latency-updated></span>
+    </p>
+  </div>
+  <div class="latency-grid">
+    <div>
+      <h3 class="metric-label">REST round-trip (ms)</h3>
+      <table class="data-table compact">
+        <thead>
+          <tr><th>op</th><th>n</th><th>p50</th><th>p90</th><th>p99</th><th>max</th></tr>
+        </thead>
+        <tbody data-latency-rest>
+          <tr><td colspan="6" class="subtle">loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3 class="metric-label">WS event age (ms)</h3>
+      <table class="data-table compact">
+        <thead>
+          <tr><th>kind</th><th>n</th><th>p50</th><th>p90</th><th>p99</th><th>max</th></tr>
+        </thead>
+        <tbody data-latency-ws>
+          <tr><td colspan="6" class="subtle">loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="card" data-slip-widget>
+  <div class="card-head">
+    <h2>Fill slippage</h2>
+    <p class="subtle">
+      Per-fill price drift vs the limit price we placed. Positive bps = adverse, negative = price improvement.
+      <span data-slip-summary></span>
+      <span class="subtle" data-slip-updated></span>
+    </p>
+  </div>
+  <div class="latency-grid">
+    <div>
+      <h3 class="metric-label">By side (bps)</h3>
+      <table class="data-table compact">
+        <thead>
+          <tr><th>side</th><th>n</th><th>p50</th><th>p90</th><th>p99</th><th>max</th><th>adv%</th></tr>
+        </thead>
+        <tbody data-slip-by-side>
+          <tr><td colspan="7" class="subtle">loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3 class="metric-label">By symbol (bps)</h3>
+      <table class="data-table compact">
+        <thead>
+          <tr><th>symbol</th><th>n</th><th>p50</th><th>p90</th><th>p99</th><th>max</th><th>adv%</th></tr>
+        </thead>
+        <tbody data-slip-by-symbol>
+          <tr><td colspan="7" class="subtle">loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
 <section class="card">
   <div class="card-head">
     <h2>Equity &amp; drawdown</h2>

@@ -373,6 +373,153 @@ class DashboardService:
             })
         return rows[-max(1, min(limit, 500)):]
 
+    def latency_stats(self, *, window_size: int = 100) -> dict[str, Any]:
+        """Aggregate bybit.rest.latency + bybit.ws.event_age events into rolling percentiles.
+
+        Reads the latest log file under logs/, keeps the last `window_size` samples per
+        REST `op` and WS `kind`, and returns min/p50/p90/p99/max/mean for each group.
+        """
+        from collections import deque
+
+        try:
+            source = latest_log(self.logs_dir, "*.log")
+        except FileNotFoundError:
+            return {"source_log": None, "rest": {}, "ws": {}, "updated_at": None}
+
+        window_size = max(10, min(window_size, 1000))
+        rest_samples: dict[str, deque[float]] = {}
+        ws_samples: dict[str, deque[float]] = {}
+        rest_last_ts: dict[str, str] = {}
+        ws_last_ts: dict[str, str] = {}
+
+        for ev in iter_ai_events(source):
+            if ev.event == "bybit.rest.latency":
+                op = (ev.fields.get("op") or "unknown").strip()
+                try:
+                    ms = float(ev.fields.get("ms"))
+                except (TypeError, ValueError):
+                    continue
+                rest_samples.setdefault(op, deque(maxlen=window_size)).append(ms)
+                rest_last_ts[op] = ev.ts
+            elif ev.event == "bybit.ws.event_age":
+                kind = (ev.fields.get("kind") or "unknown").strip()
+                try:
+                    ms = float(ev.fields.get("ms"))
+                except (TypeError, ValueError):
+                    continue
+                ws_samples.setdefault(kind, deque(maxlen=window_size)).append(ms)
+                ws_last_ts[kind] = ev.ts
+
+        def _stats(samples: list[float]) -> dict[str, float | int]:
+            if not samples:
+                return {"count": 0}
+            arr = sorted(samples)
+            n = len(arr)
+            def pct(p: float) -> float:
+                if n == 1:
+                    return arr[0]
+                k = max(0, min(n - 1, int(round(p * (n - 1)))))
+                return arr[k]
+            return {
+                "count": n,
+                "min": round(arr[0], 2),
+                "p50": round(pct(0.50), 2),
+                "p90": round(pct(0.90), 2),
+                "p99": round(pct(0.99), 2),
+                "max": round(arr[-1], 2),
+                "mean": round(sum(arr) / n, 2),
+            }
+
+        return {
+            "source_log": str(source.relative_to(self.root)) if source.is_absolute() else str(source),
+            "window_size": window_size,
+            "rest": {
+                op: {**_stats(list(samples)), "last_ts": rest_last_ts.get(op)}
+                for op, samples in sorted(rest_samples.items())
+            },
+            "ws": {
+                kind: {**_stats(list(samples)), "last_ts": ws_last_ts.get(kind)}
+                for kind, samples in sorted(ws_samples.items())
+            },
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def slip_stats(self, *, window_size: int = 200) -> dict[str, Any]:
+        """Aggregate bybit.fill.slip_bps events into per-side / per-symbol percentiles.
+
+        Slip sign convention (from bybit_live._record_slip):
+          - positive bps = adverse (paid more on buy, got less on sell)
+          - negative bps = price improvement
+        """
+        from collections import deque
+
+        try:
+            source = latest_log(self.logs_dir, "*.log")
+        except FileNotFoundError:
+            return {"source_log": None, "by_side": {}, "by_symbol": {}, "all": {}, "updated_at": None}
+
+        window_size = max(10, min(window_size, 2000))
+        by_side: dict[str, deque[float]] = {}
+        by_symbol: dict[str, deque[float]] = {}
+        all_samples: deque[float] = deque(maxlen=window_size)
+        last_ts: str | None = None
+        recent: deque[dict[str, Any]] = deque(maxlen=20)
+
+        for ev in iter_ai_events(source):
+            if ev.event != "bybit.fill.slip_bps":
+                continue
+            try:
+                bps = float(ev.fields.get("bps"))
+            except (TypeError, ValueError):
+                continue
+            side = (ev.fields.get("side") or "?").strip()
+            sym = (ev.fields.get("symbol") or "?").strip()
+            by_side.setdefault(side, deque(maxlen=window_size)).append(bps)
+            by_symbol.setdefault(sym, deque(maxlen=window_size)).append(bps)
+            all_samples.append(bps)
+            last_ts = ev.ts
+            recent.append({
+                "ts": ev.ts,
+                "symbol": sym,
+                "side": side,
+                "expected": ev.fields.get("expected"),
+                "fill": ev.fields.get("fill"),
+                "bps": round(bps, 3),
+            })
+
+        def _stats(samples: list[float]) -> dict[str, float | int]:
+            if not samples:
+                return {"count": 0}
+            arr = sorted(samples)
+            n = len(arr)
+            def pct(p: float) -> float:
+                if n == 1:
+                    return arr[0]
+                k = max(0, min(n - 1, int(round(p * (n - 1)))))
+                return arr[k]
+            adverse = [v for v in arr if v > 0]
+            return {
+                "count": n,
+                "min": round(arr[0], 3),
+                "p50": round(pct(0.50), 3),
+                "p90": round(pct(0.90), 3),
+                "p99": round(pct(0.99), 3),
+                "max": round(arr[-1], 3),
+                "mean": round(sum(arr) / n, 3),
+                "adverse_pct": round(100 * len(adverse) / n, 1),
+            }
+
+        return {
+            "source_log": str(source.relative_to(self.root)) if source.is_absolute() else str(source),
+            "window_size": window_size,
+            "all": _stats(list(all_samples)),
+            "by_side": {k: _stats(list(v)) for k, v in sorted(by_side.items())},
+            "by_symbol": {k: _stats(list(v)) for k, v in sorted(by_symbol.items())},
+            "last_ts": last_ts,
+            "recent": list(recent),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     def backtest_analysis(
         self,
         *,

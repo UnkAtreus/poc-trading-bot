@@ -45,16 +45,80 @@ def test_summarize_recent_messages_report_connected():
     assert out["public"]["subscribed_symbols"] == ["BTCUSDT", "ETHUSDT"]
 
 
-def test_summarize_stale_messages_report_stale():
+def test_summarize_stale_public_reports_stale():
     out = _summarize_ws_status(
         now_ts=1000.0,
         public_last_msg_ts=800.0,   # 200s old, public 1m kline → stale
-        private_last_msg_ts=400.0,  # 600s old, private idle → stale
+        private_last_msg_ts=995.0,  # fresh
         public_symbols=["BTCUSDT"],
         private_subscribed=True,
     )
     assert out["public"]["status"] == "stale"
+    assert out["private"]["status"] == "connected"
+
+
+def test_summarize_private_idle_reports_connected_idle_not_stale():
+    out = _summarize_ws_status(
+        now_ts=10_000.0,
+        public_last_msg_ts=9_995.0,
+        private_last_msg_ts=8_000.0,  # 2000s old, past 900s threshold
+        public_symbols=["BTCUSDT"],
+        private_subscribed=True,
+    )
+    assert out["public"]["status"] == "connected"
+    assert out["private"]["status"] == "connected_idle"
+    assert out["private"]["last_msg_age_seconds"] == 2000.0
+
+
+def test_summarize_private_thread_dead_reports_stale_even_when_recent():
+    out = _summarize_ws_status(
+        now_ts=1000.0,
+        public_last_msg_ts=995.0,
+        private_last_msg_ts=990.0,  # fresh, but thread died
+        public_symbols=["BTCUSDT"],
+        private_subscribed=True,
+        private_thread_alive=False,
+    )
+    assert out["public"]["status"] == "connected"
     assert out["private"]["status"] == "stale"
+
+
+def test_summarize_public_thread_dead_reports_stale_even_when_recent():
+    out = _summarize_ws_status(
+        now_ts=1000.0,
+        public_last_msg_ts=995.0,
+        private_last_msg_ts=995.0,
+        public_symbols=["BTCUSDT"],
+        private_subscribed=True,
+        public_thread_alive=False,
+    )
+    assert out["public"]["status"] == "stale"
+    assert out["private"]["status"] == "connected"
+
+
+def test_ws_thread_alive_helper():
+    class _FakeAliveThread:
+        @staticmethod
+        def is_alive() -> bool:
+            return True
+
+    class _FakeDeadThread:
+        @staticmethod
+        def is_alive() -> bool:
+            return False
+
+    class _WSWithThread:
+        def __init__(self, thread) -> None:
+            self.wst = thread
+
+    class _WSNoThread:
+        pass
+
+    assert BybitLive._ws_thread_alive(None) is False
+    assert BybitLive._ws_thread_alive(_WSWithThread(_FakeAliveThread())) is True
+    assert BybitLive._ws_thread_alive(_WSWithThread(_FakeDeadThread())) is False
+    # Fresh ws without a `wst` attribute yet → assume alive until reset.
+    assert BybitLive._ws_thread_alive(_WSNoThread()) is True
 
 
 def test_summarize_subscribed_but_never_received_message_reports_connecting():

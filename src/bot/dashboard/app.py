@@ -281,6 +281,14 @@ def create_app(root: Path | str = ".") -> FastAPI:
     def api_log_events(event: str = "", symbol: str = "", limit: int = 120, _: str = Depends(require_auth)):
         return {"events": service.log_events(event=event, symbol=symbol, limit=limit)}
 
+    @app.get("/api/latency")
+    def api_latency(window: int = 100, _: str = Depends(require_auth)):
+        return service.latency_stats(window_size=window)
+
+    @app.get("/api/slip")
+    def api_slip(window: int = 200, _: str = Depends(require_auth)):
+        return service.slip_stats(window_size=window)
+
     @app.post("/actions/kill")
     def action_kill(confirm: Annotated[str, Form()], _: str = Depends(require_auth)):
         if confirm != "KILL":

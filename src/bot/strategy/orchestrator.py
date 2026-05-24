@@ -17,6 +17,7 @@ from bot.models import (
     Candle,
     Direction,
     ExecutionEvent,
+    Instrument,
     OrderEvent,
     OrderPurpose,
     Position,
@@ -50,6 +51,12 @@ log = get_logger(__name__)
 
 MAX_BYBIT_ORDER_LINK_ID_LEN = 45
 ORDER_LINK_RANDOM_LEN = 16
+
+# Drift threshold for size and BEP comparisons against exchange truth. Above
+# IEEE-754 noise from accumulated weighted-average BEP math (~1e-9) but well
+# below any practical min-order step. Treats anything tighter than this as a
+# float-equality match — prevents spam in size-drift / position-drift logs.
+RECONCILE_NOISE_EPS = 1e-3
 
 
 def _link_factory():
@@ -109,6 +116,10 @@ class _SymbolRuntime:
     ctx: Context
     merge_handle: asyncio.TimerHandle | None = None
     pending_entry_notional: dict[str, float] = field(default_factory=dict)
+    # Highwater of the most recent exchange snapshot we've adopted. Any
+    # ExecutionEvent with timestamp <= this value is already baked into the
+    # adopted position_size/bep and must be skipped to avoid double-counting.
+    last_adopt_ts: float = 0.0
 
 
 @dataclass
@@ -143,6 +154,10 @@ class Orchestrator:
         self._stop = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
         self._dust_cleanup_attempts: dict[str, _DustCleanupAttempt] = {}
+        # Per-symbol Instrument cache for pre-flight min-qty/min-notional
+        # checks. Populated lazily via _get_instrument; survives the lifetime
+        # of the orchestrator.
+        self._instrument_cache: dict[str, Instrument] = {}
 
     async def start(self) -> None:
         await self.adapter.start()
@@ -231,6 +246,18 @@ class Orchestrator:
         if isinstance(ev, ExecutionEvent):
             rt = self._runtimes.get(ev.symbol)
             if rt is None:
+                return
+            if rt.last_adopt_ts > 0 and ev.timestamp <= rt.last_adopt_ts:
+                # This fill predates our last exchange-truth adoption — it's
+                # already baked into the adopted position_size. Applying it
+                # again would double-count and re-introduce drift.
+                log.info(
+                    "execution_skipped_pre_adopt",
+                    symbol=ev.symbol,
+                    link_id=ev.link_id,
+                    ev_ts=ev.timestamp,
+                    adopt_ts=rt.last_adopt_ts,
+                )
                 return
             purpose = _execution_purpose(ev, rt.ctx)
             if purpose is None:
@@ -322,23 +349,77 @@ class Orchestrator:
                 await self._apply(ev.symbol, rt, decision)
 
         elif isinstance(ev, PositionEvent):
-            # Authoritative truth about size/BEP. We trust the SM's own bookkeeping
-            # for transitions but log drifts.
+            # Authoritative truth about size/BEP from the WS position stream.
+            # If it disagrees with our SM state we must have missed an
+            # ExecutionEvent (dropped WS message, reconnect gap, etc.).
+            # Trigger an immediate per-symbol reconcile so the SM adopts
+            # exchange truth in milliseconds instead of waiting up to
+            # reconcile_every_seconds (default 30s) — long enough on mainnet
+            # for the position to ride uncovered.
             rt = self._runtimes.get(ev.symbol)
             if rt is None:
                 return
             local = abs(rt.ctx.position_size)
-            if abs(local - abs(ev.size)) > 1e-6:
-                log.info(
+            exch = abs(ev.size)
+            if abs(local - exch) > RECONCILE_NOISE_EPS:
+                log.warning(
                     "position_drift", symbol=ev.symbol,
-                    local=local, exchange=abs(ev.size), bep_local=rt.ctx.bep, bep_exchange=ev.avg_price,
+                    local=local, exchange=exch,
+                    bep_local=rt.ctx.bep, bep_exchange=ev.avg_price,
                 )
+                await self._reconcile_symbol(ev.symbol, snapshot_ts=ev.timestamp)
 
     async def _apply(self, symbol: str, rt: _SymbolRuntime, decision) -> None:
         rt.ctx = decision.ctx
         for action in decision.actions:
             await self._execute(symbol, rt, action)
         self.store.save(rt.ctx)
+
+    async def _get_instrument(self, symbol: str) -> Instrument | None:
+        """Cached lookup of per-symbol Instrument metadata.
+
+        Used by the pre-flight min-qty / min-notional check below so we can
+        decide locally (without a Bybit round-trip) whether a place_limit
+        call would be rejected as dust. Returns None on lookup failure so
+        the caller falls back to the adapter's own validation.
+        """
+        cached = self._instrument_cache.get(symbol)
+        if cached is not None:
+            return cached
+        try:
+            inst = await self.adapter.get_instrument(symbol)
+        except Exception as e:
+            log.warning("get_instrument_failed", symbol=symbol, error=str(e))
+            return None
+        self._instrument_cache[symbol] = inst
+        return inst
+
+    async def _check_min_qty(
+        self, symbol: str, qty: float, price: float
+    ) -> str | None:
+        """Pre-flight check that qty/notional clear the exchange's filters.
+
+        Returns a rejection reason string if the order would be dust,
+        or None if the order is fine to place. Reason strings match the
+        adapter-level rejections (``qty_below_min`` / ``notional_below_min``)
+        so the SM's existing ``_is_dust_rejection`` recognizes them and
+        parks the symbol in ``DUST_STRANDED``.
+
+        Catching this locally avoids the Bybit round-trip that produces the
+        ``orderQty will be truncated to zero`` / ``110017`` log noise and,
+        more importantly, lets us tag the rejection at action-emission time
+        instead of after the network call.
+        """
+        inst = await self._get_instrument(symbol)
+        if inst is None:
+            return None
+        min_qty = float(inst.min_qty)
+        min_notional = float(inst.min_notional)
+        if qty + 0.0 < min_qty:
+            return f"qty_below_min({qty} < {min_qty})"
+        if qty * price < min_notional:
+            return f"notional_below_min({qty * price} < {min_notional})"
+        return None
 
     async def _execute(self, symbol: str, rt: _SymbolRuntime, action: Action) -> None:
         if isinstance(action, PlaceEntry):
@@ -347,6 +428,12 @@ class Orchestrator:
             if not ok:
                 log.info("entry_blocked", symbol=symbol, reason=reason)
                 await self._handle_entry_rejected(symbol, rt, action.link_id, reason)
+                return
+            dust_reason = await self._check_min_qty(symbol, action.qty, action.price)
+            if dust_reason is not None:
+                log.info("entry_below_min", symbol=symbol, link_id=action.link_id,
+                         reason=dust_reason)
+                await self._handle_entry_rejected(symbol, rt, action.link_id, dust_reason)
                 return
             ack = await self.adapter.place_limit(symbol, action.direction.entry_side,
                                                  action.qty, action.price, action.link_id)
@@ -359,6 +446,13 @@ class Orchestrator:
                     self._halt_for_fatal_order_error(symbol, action.link_id, ack.reason)
 
         elif isinstance(action, PlaceTP):
+            dust_reason = await self._check_min_qty(symbol, action.qty, action.price)
+            if dust_reason is not None:
+                log.warning("tp_place_skipped_below_min", symbol=symbol,
+                            link_id=action.link_id, reason=dust_reason)
+                await self._feed_order_rejected(symbol, rt, action.link_id,
+                                                OrderPurpose.TP, dust_reason)
+                return
             ack = await self.adapter.place_limit(symbol, action.direction.tp_side,
                                                  action.qty, action.price, action.link_id,
                                                  reduce_only=True, post_only=False)
@@ -372,6 +466,13 @@ class Orchestrator:
                                                     OrderPurpose.TP, ack.reason)
 
         elif isinstance(action, PlaceMergeTP):
+            dust_reason = await self._check_min_qty(symbol, action.qty, action.price)
+            if dust_reason is not None:
+                log.warning("merge_tp_place_skipped_below_min", symbol=symbol,
+                            link_id=action.link_id, reason=dust_reason)
+                await self._feed_order_rejected(symbol, rt, action.link_id,
+                                                OrderPurpose.MERGE, dust_reason)
+                return
             ack = await self.adapter.place_limit(symbol, action.direction.tp_side,
                                                  action.qty, action.price, action.link_id,
                                                  reduce_only=True, post_only=False)
@@ -505,43 +606,58 @@ class Orchestrator:
         thinks we have a position, force-reset to IDLE.
         """
         for sym in self.settings.symbols.active:
-            rt = self._runtimes.get(sym)
-            if rt is None:
-                continue
-            try:
-                pos = await self.adapter.get_position(sym)
-                local_size = rt.ctx.position_size
-                exch_size = abs(pos.size)
-                if pos.is_flat and rt.ctx.state is not State.IDLE and local_size > 0:
-                    log.warning("reconcile.force_idle", symbol=sym, local_size=local_size)
-                    rt.ctx = Context(symbol=sym)
-                    self.risk.sync_open_notional(sym, 0.0)
-                    self.store.save(rt.ctx)
-                    self._dust_cleanup_attempts.pop(sym, None)
-                    if rt.merge_handle is not None:
-                        rt.merge_handle.cancel()
-                        rt.merge_handle = None
-                elif not pos.is_flat and pos.direction is not None and (
-                    abs(local_size - exch_size) > 1e-6
-                    or rt.ctx.direction is not pos.direction
-                    or rt.ctx.state is State.IDLE
-                    or abs(rt.ctx.bep - pos.avg_price) > 1e-6
-                ):
-                    log.info(
-                        "reconcile.size_drift", symbol=sym,
-                        local=local_size, exchange=exch_size,
-                        bep_local=rt.ctx.bep, bep_exchange=pos.avg_price,
-                    )
-                    await self._adopt_exchange_position(sym, rt, pos.direction, exch_size, pos.avg_price)
-                    if rt.ctx.state is State.DUST_STRANDED:
-                        await self._maybe_cleanup_dust_position(sym, rt, pos)
-                elif not pos.is_flat:
-                    if rt.ctx.state is State.DUST_STRANDED:
-                        await self._maybe_cleanup_dust_position(sym, rt, pos)
-                    else:
-                        await self._ensure_protective_exit_order(sym, rt)
-            except Exception as e:
-                log.warning("reconcile.failed", symbol=sym, error=str(e))
+            await self._reconcile_symbol(sym)
+
+    async def _reconcile_symbol(self, sym: str, snapshot_ts: float | None = None) -> None:
+        """Reconcile a single symbol's SM state against exchange truth.
+
+        Called from the periodic loop, on boot, and now also from the WS
+        ``PositionEvent`` handler when it detects drift. The ``snapshot_ts``
+        argument lets the caller pass the exchange-side timestamp of the
+        position snapshot that triggered the reconcile so we can correctly
+        dedupe any in-flight ``ExecutionEvent`` deliveries.
+        """
+        rt = self._runtimes.get(sym)
+        if rt is None:
+            return
+        try:
+            pos = await self.adapter.get_position(sym)
+            local_size = rt.ctx.position_size
+            exch_size = abs(pos.size)
+            if pos.is_flat and rt.ctx.state is not State.IDLE and local_size > 0:
+                log.warning("reconcile.force_idle", symbol=sym, local_size=local_size)
+                rt.ctx = Context(symbol=sym)
+                rt.last_adopt_ts = max(rt.last_adopt_ts, snapshot_ts or time.time())
+                self.risk.sync_open_notional(sym, 0.0)
+                self.store.save(rt.ctx)
+                self._dust_cleanup_attempts.pop(sym, None)
+                if rt.merge_handle is not None:
+                    rt.merge_handle.cancel()
+                    rt.merge_handle = None
+            elif not pos.is_flat and pos.direction is not None and (
+                abs(local_size - exch_size) > RECONCILE_NOISE_EPS
+                or rt.ctx.direction is not pos.direction
+                or rt.ctx.state is State.IDLE
+                or abs(rt.ctx.bep - pos.avg_price) > RECONCILE_NOISE_EPS
+            ):
+                log.info(
+                    "reconcile.size_drift", symbol=sym,
+                    local=local_size, exchange=exch_size,
+                    bep_local=rt.ctx.bep, bep_exchange=pos.avg_price,
+                )
+                await self._adopt_exchange_position(
+                    sym, rt, pos.direction, exch_size, pos.avg_price,
+                    snapshot_ts=snapshot_ts,
+                )
+                if rt.ctx.state is State.DUST_STRANDED:
+                    await self._maybe_cleanup_dust_position(sym, rt, pos)
+            elif not pos.is_flat:
+                if rt.ctx.state is State.DUST_STRANDED:
+                    await self._maybe_cleanup_dust_position(sym, rt, pos)
+                else:
+                    await self._ensure_protective_exit_order(sym, rt)
+        except Exception as e:
+            log.warning("reconcile.failed", symbol=sym, error=str(e))
 
     async def _adopt_exchange_position(
         self,
@@ -550,6 +666,7 @@ class Orchestrator:
         direction: Direction,
         size: float,
         bep: float,
+        snapshot_ts: float | None = None,
     ) -> None:
         """Adopt exchange position truth and recreate protective exit order."""
         now = time.time()
@@ -570,6 +687,10 @@ class Orchestrator:
             pending_entry_link_id=None,
         )
         rt.pending_entry_notional.clear()
+        # Mark the adoption highwater so any in-flight executions that fed
+        # into this snapshot are dropped by the ExecutionEvent guard rather
+        # than re-applied on top of the adopted size.
+        rt.last_adopt_ts = max(rt.last_adopt_ts, snapshot_ts or now)
         self.risk.sync_open_notional(symbol, size * bep)
         self.store.save(rt.ctx)
         log.warning(
