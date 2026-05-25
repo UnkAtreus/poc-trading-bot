@@ -96,6 +96,10 @@ def create_app(root: Path | str = ".") -> FastAPI:
             },
         )
 
+    @app.get("/diagnostics", response_class=HTMLResponse)
+    def diagnostics(request: Request, _: str = Depends(require_auth)):
+        return render(request, "diagnostics.html", {})
+
     @app.get("/alerts", response_class=HTMLResponse)
     def alerts(request: Request, _: str = Depends(require_auth)):
         return render(request, "alerts.html", {"analysis": service.log_analysis()})
@@ -109,12 +113,21 @@ def create_app(root: Path | str = ".") -> FastAPI:
         request: Request,
         event: str = "",
         symbol: str = "",
+        page: int = 1,
+        per_page: int = 120,
         _: str = Depends(require_auth),
     ):
+        result = service.log_events_page(
+            event=event, symbol=symbol, page=page, per_page=per_page,
+        )
         return render(
             request,
             "logs.html",
-            {"events": service.log_events(event=event, symbol=symbol), "event": event, "symbol": symbol},
+            {
+                "result": result,
+                "event": event,
+                "symbol": symbol,
+            },
         )
 
     @app.get("/backtests", response_class=HTMLResponse)
@@ -288,6 +301,14 @@ def create_app(root: Path | str = ".") -> FastAPI:
     @app.get("/api/slip")
     def api_slip(window: int = 200, _: str = Depends(require_auth)):
         return service.slip_stats(window_size=window)
+
+    @app.get("/api/ws-health")
+    def api_ws_health(_: str = Depends(require_auth)):
+        return service.ws_health()
+
+    @app.get("/api/reconcile-activity")
+    def api_reconcile_activity(window_minutes: int = 60, _: str = Depends(require_auth)):
+        return service.reconcile_activity(window_minutes=window_minutes)
 
     @app.post("/actions/kill")
     def action_kill(confirm: Annotated[str, Form()], _: str = Depends(require_auth)):

@@ -546,7 +546,7 @@
     setInterval(refreshJobs, 3000);
   }
 
-  // Live latency widget on the overview page.
+  // Live latency widget (lives on /diagnostics).
   const latencyEl = document.querySelector("[data-latency-widget]");
   if (latencyEl) {
     const restBody = latencyEl.querySelector("[data-latency-rest]");
@@ -614,10 +614,17 @@
       if (val < 0) return "pos";
       return "";
     };
+    // Maker rate class — strategy targets >=90% maker; <80% is a red flag.
+    const clsMaker = (val) => {
+      if (val == null) return "";
+      if (val >= 90) return "pos";
+      if (val >= 80) return "warn";
+      return "neg";
+    };
     const renderRows = (tbody, data, keyLabel) => {
       const keys = Object.keys(data || {}).sort();
       if (!keys.length) {
-        tbody.innerHTML = `<tr><td colspan="7" class="subtle">no fills yet</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="subtle">no fills yet</td></tr>`;
         return;
       }
       tbody.innerHTML = keys.map((k) => {
@@ -630,6 +637,7 @@
           <td class="${clsBps(s.p99)}">${fmt(s.p99)}</td>
           <td class="${clsBps(s.max)}">${fmt(s.max)}</td>
           <td>${fmt(s.adverse_pct)}</td>
+          <td class="${clsMaker(s.maker_pct)}">${fmt(s.maker_pct)}</td>
         </tr>`;
       }).join("");
     };
@@ -643,7 +651,8 @@
           updatedEl.textContent = "· updated " + t.toLocaleTimeString();
         }
         if (summaryEl && data.all && data.all.count > 0) {
-          summaryEl.textContent = ` · all-fills n=${data.all.count}, p50=${fmt(data.all.p50)} bps, p90=${fmt(data.all.p90)} bps, adverse=${fmt(data.all.adverse_pct)}%`;
+          const a = data.all;
+          summaryEl.textContent = ` · all-fills n=${a.count}, p50=${fmt(a.p50)} bps, p90=${fmt(a.p90)} bps, adverse=${fmt(a.adverse_pct)}%, maker=${fmt(a.maker_pct)}%`;
         } else if (summaryEl) {
           summaryEl.textContent = " · no fills observed yet";
         }
@@ -655,5 +664,135 @@
     };
     refreshSlip();
     setInterval(refreshSlip, 5000);
+  }
+
+  // WebSocket health widget (lives on /diagnostics).
+  const wsHealthEl = document.querySelector("[data-ws-health-widget]");
+  if (wsHealthEl) {
+    const pubStatus = wsHealthEl.querySelector("[data-ws-public-status]");
+    const pubAge = wsHealthEl.querySelector("[data-ws-public-age]");
+    const pubSubs = wsHealthEl.querySelector("[data-ws-public-subs]");
+    const pubSyms = wsHealthEl.querySelector("[data-ws-public-symbols]");
+    const prvStatus = wsHealthEl.querySelector("[data-ws-private-status]");
+    const prvAge = wsHealthEl.querySelector("[data-ws-private-age]");
+    const prvSubs = wsHealthEl.querySelector("[data-ws-private-subs]");
+    const prvFlag = wsHealthEl.querySelector("[data-ws-private-flag]");
+    const hbAge = wsHealthEl.querySelector("[data-ws-heartbeat-age]");
+    const updatedEl = wsHealthEl.querySelector("[data-ws-health-updated]");
+    const sourceEl = wsHealthEl.querySelector("[data-ws-source]");
+    const fmtNum = (v) => v == null ? "—" : Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 });
+    const fmtAge = (sec) => {
+      if (sec == null) return "—";
+      const n = Number(sec);
+      if (!Number.isFinite(n)) return "—";
+      if (n < 60) return `${n.toFixed(1)}s`;
+      if (n < 3600) return `${(n / 60).toFixed(1)}m`;
+      return `${(n / 3600).toFixed(1)}h`;
+    };
+    const statusClass = (status, age) => {
+      if (status !== "connected") return "danger";
+      if (age != null && Number(age) > 60) return "warn";
+      return "pos";
+    };
+    const refreshWsHealth = async () => {
+      try {
+        const res = await fetch("/api/ws-health", { headers: { Accept: "application/json" }});
+        if (!res.ok) return;
+        const data = await res.json();
+        const pub = data.public || {};
+        const prv = data.private || {};
+        const subs = data.subscribe_counts || {};
+        pubStatus.textContent = pub.status || "unknown";
+        pubStatus.className = "pill " + statusClass(pub.status, pub.last_msg_age_seconds);
+        pubAge.textContent = fmtAge(pub.last_msg_age_seconds);
+        pubSubs.textContent = subs.public ?? "—";
+        pubSyms.innerHTML = (pub.subscribed_symbols || []).map((s) => `<code>${s}</code>`).join(" ") || "—";
+        prvStatus.textContent = prv.status || "unknown";
+        prvStatus.className = "pill " + statusClass(prv.status, prv.last_msg_age_seconds);
+        prvAge.textContent = fmtAge(prv.last_msg_age_seconds);
+        prvSubs.textContent = subs.private ?? "—";
+        prvFlag.textContent = prv.subscribed ? "yes" : "no";
+        hbAge.textContent = fmtAge(data.heartbeat_age_seconds);
+        if (sourceEl) sourceEl.textContent = data.source_log || "—";
+        if (updatedEl && data.updated_at) {
+          const t = new Date(data.updated_at);
+          updatedEl.textContent = "· updated " + t.toLocaleTimeString();
+        }
+      } catch (err) {
+        console.warn("ws-health refresh failed", err);
+      }
+    };
+    refreshWsHealth();
+    setInterval(refreshWsHealth, 5000);
+  }
+
+  // Reconcile activity widget (lives on /diagnostics).
+  const reconcileEl = document.querySelector("[data-reconcile-widget]");
+  if (reconcileEl) {
+    const totalsRow = reconcileEl.querySelector("[data-reconcile-totals]");
+    const detailsEl = reconcileEl.querySelector("[data-reconcile-details]");
+    const symCountEl = reconcileEl.querySelector("[data-reconcile-symbol-count]");
+    const symHead = reconcileEl.querySelector("[data-reconcile-symbol-head]");
+    const symBody = reconcileEl.querySelector("[data-reconcile-by-symbol]");
+    const updatedEl = reconcileEl.querySelector("[data-reconcile-updated]");
+    const windowEl = reconcileEl.querySelector("[data-reconcile-window]");
+    // Any value > 0 in the rolling window is at least a yellow flag; ≥10 is amber, ≥50 is red.
+    const clsCount = (val) => {
+      const n = Number(val) || 0;
+      if (n >= 50) return "neg";
+      if (n >= 10) return "warn";
+      if (n > 0) return "warn";
+      return "pos";
+    };
+    let userToggled = false;
+    if (detailsEl) {
+      detailsEl.addEventListener("toggle", () => { userToggled = true; });
+    }
+    const refreshReconcile = async () => {
+      try {
+        const res = await fetch("/api/reconcile-activity?window_minutes=60", { headers: { Accept: "application/json" }});
+        if (!res.ok) return;
+        const data = await res.json();
+        if (windowEl && data.window_minutes != null) windowEl.textContent = data.window_minutes;
+        if (updatedEl && data.updated_at) {
+          const t = new Date(data.updated_at);
+          updatedEl.textContent = "· updated " + t.toLocaleTimeString();
+        }
+        const events = data.events || {};
+        const names = Object.keys(events);
+        if (!names.length) {
+          totalsRow.innerHTML = '<span class="subtle">no data</span>';
+        } else {
+          totalsRow.innerHTML = names.map((name) => {
+            const n = events[name] || 0;
+            return `<span class="recon-chip ${clsCount(n)}" title="${name}=${n}"><code>${name}</code><strong>${n}</strong></span>`;
+          }).join("");
+        }
+        const bySym = data.by_symbol || {};
+        const syms = Object.keys(bySym);
+        if (symCountEl) symCountEl.textContent = syms.length ? `(${syms.length} symbol${syms.length === 1 ? "" : "s"})` : "(none)";
+        // Auto-open details when there's activity; let the user override manually.
+        if (detailsEl && !userToggled) detailsEl.open = syms.length > 0;
+        if (!syms.length) {
+          symHead.innerHTML = "<tr><th>symbol</th></tr>";
+          symBody.innerHTML = `<tr><td class="subtle">no activity in window</td></tr>`;
+        } else {
+          const hot = names.filter((n) => syms.some((s) => (bySym[s] || {})[n] > 0));
+          const cols = hot.length ? hot : names;
+          symHead.innerHTML = "<tr><th>symbol</th>" + cols.map((c) => `<th>${c}</th>`).join("") + "</tr>";
+          symBody.innerHTML = syms.map((s) => {
+            const row = bySym[s] || {};
+            return `<tr><td><code>${s}</code></td>` + cols.map((c) => {
+              const v = row[c] || 0;
+              return `<td class="${clsCount(v)}">${v}</td>`;
+            }).join("") + "</tr>";
+          }).join("");
+        }
+      } catch (err) {
+        console.warn("reconcile refresh failed", err);
+      }
+    };
+    refreshReconcile();
+    setInterval(refreshReconcile, 5000);
   }
 })();

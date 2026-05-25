@@ -147,8 +147,10 @@ def test_settings_is_last_nav_item_and_contains_alerting(repo: Path, monkeypatch
         'href="/">Overview',
         'href="/trading">Trading',
         'href="/balance">Balance',
-        'href="/alerts">Alerts & Logs',
+        'href="/diagnostics">Diagnostics',
         'href="/backtests">Backtests',
+        'href="/analysis">Analysis',
+        'href="/alerts">Alerts & Logs',
         'href="/logs">Raw Events',
         'href="/settings">Settings',
     ]
@@ -341,6 +343,168 @@ def test_log_events_filter_by_event_and_symbol(repo: Path) -> None:
 
     limited = service.log_events(limit=1)
     assert len(limited) == 1
+
+
+def test_log_events_page_paginates_newest_first(repo: Path) -> None:
+    log = repo / "logs" / "bot.log"
+    lines = [
+        f"2026-05-12T08:44:{i:02d}.000000Z [info     ] heartbeat states={{'BTCUSDT': 'IDLE'}}"
+        for i in range(25)
+    ]
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    service = DashboardService(repo)
+
+    page1 = service.log_events_page(page=1, per_page=10)
+    assert page1["total"] == 25
+    assert page1["per_page"] == 10
+    assert page1["page"] == 1
+    assert page1["total_pages"] == 3
+    assert len(page1["events"]) == 10
+    # Newest first.
+    assert page1["events"][0]["ts"].startswith("2026-05-12T08:44:24")
+    assert page1["events"][-1]["ts"].startswith("2026-05-12T08:44:15")
+
+    page2 = service.log_events_page(page=2, per_page=10)
+    assert page2["page"] == 2
+    assert page2["events"][0]["ts"].startswith("2026-05-12T08:44:14")
+
+    page3 = service.log_events_page(page=3, per_page=10)
+    assert page3["page"] == 3
+    assert len(page3["events"]) == 5  # remainder
+
+    # Overshooting page snaps to last.
+    over = service.log_events_page(page=99, per_page=10)
+    assert over["page"] == 3
+
+    # per_page clamped (min 10).
+    clamped = service.log_events_page(page=1, per_page=1)
+    assert clamped["per_page"] == 10
+
+
+def test_log_events_page_empty(repo: Path) -> None:
+    (repo / "logs" / "bot.log").write_text("", encoding="utf-8")
+    service = DashboardService(repo)
+    result = service.log_events_page()
+    assert result["total"] == 0
+    assert result["events"] == []
+    assert result["page"] == 1
+    assert result["total_pages"] == 0
+
+
+def test_ws_health_parses_latest_heartbeat(repo: Path) -> None:
+    log = repo / "logs" / "bot.log"
+    log.write_text(
+        "\n".join([
+            "2026-05-25T10:00:00.000000Z [info     ] public_ws_subscribed interval=1 symbols=['BTCUSDT']",
+            "2026-05-25T10:00:00.000000Z [info     ] private_ws_subscribed",
+            # An older heartbeat — ws_health() must pick the latest one.
+            "2026-05-25T10:00:10.000000Z [info     ] heartbeat states={'BTCUSDT': 'IDLE'} ws={'public': {'status': 'connected', 'last_msg_age_seconds': 0.3, 'subscribed_symbols': ['BTCUSDT']}, 'private': {'status': 'connected', 'last_msg_age_seconds': 5.0, 'subscribed': True}}",
+            # Latest heartbeat — should win.
+            "2026-05-25T10:01:10.000000Z [info     ] heartbeat states={'BTCUSDT': 'IDLE', 'ETHUSDT': 'IDLE'} ws={'public': {'status': 'connected', 'last_msg_age_seconds': 0.4, 'subscribed_symbols': ['BTCUSDT', 'ETHUSDT']}, 'private': {'status': 'connected', 'last_msg_age_seconds': 75.0, 'subscribed': True}}",
+            # A reconnect — bumps subscribe counts.
+            "2026-05-25T10:02:00.000000Z [info     ] public_ws_subscribed interval=1 symbols=['BTCUSDT', 'ETHUSDT']",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    service = DashboardService(repo)
+    result = service.ws_health()
+    assert result["public"] == {
+        "status": "connected",
+        "last_msg_age_seconds": 0.4,
+        "subscribed_symbols": ["BTCUSDT", "ETHUSDT"],
+    }
+    assert result["private"] == {
+        "status": "connected",
+        "last_msg_age_seconds": 75.0,
+        "subscribed": True,
+    }
+    assert result["subscribe_counts"] == {"public": 2, "private": 1}
+    assert result["last_heartbeat_ts"] == "2026-05-25T10:01:10.000000Z"
+
+
+def test_ws_health_no_heartbeat_yet(repo: Path) -> None:
+    (repo / "logs" / "bot.log").write_text(
+        "2026-05-25T10:00:00.000000Z [info     ] bot.starting mode=testnet\n",
+        encoding="utf-8",
+    )
+    service = DashboardService(repo)
+    result = service.ws_health()
+    assert result["public"] is None
+    assert result["private"] is None
+    assert result["subscribe_counts"] == {"public": 0, "private": 0}
+
+
+def test_reconcile_activity_counts_tracked_events_in_window(repo: Path) -> None:
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    # All within the default 60-min window.
+    ts_recent = now.strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+    log = repo / "logs" / "bot.log"
+    log.write_text(
+        "\n".join([
+            f"{ts_recent} [warning  ] position_drift symbol=BTCUSDT local=0 exchange=10",
+            f"{ts_recent} [warning  ] position_drift symbol=BTCUSDT local=0 exchange=10",
+            f"{ts_recent} [warning  ] reconcile.adopt_exchange_position symbol=BTCUSDT direction=LONG",
+            f"{ts_recent} [warning  ] reconcile.force_idle symbol=ETHUSDT local_size=5",
+            f"{ts_recent} [info     ] execution_skipped_pre_adopt symbol=BTCUSDT link_id=foo",
+            f"{ts_recent} [info     ] heartbeat states={{'BTCUSDT': 'IDLE'}}",  # not tracked
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    service = DashboardService(repo)
+    result = service.reconcile_activity(window_minutes=60)
+    assert result["events"]["position_drift"] == 2
+    assert result["events"]["reconcile.adopt_exchange_position"] == 1
+    assert result["events"]["reconcile.force_idle"] == 1
+    assert result["events"]["execution_skipped_pre_adopt"] == 1
+    assert result["events"]["reconcile.failed"] == 0  # tracked but no occurrences
+    # Heartbeat is not tracked
+    assert "heartbeat" not in result["events"]
+    # by_symbol layout
+    assert "BTCUSDT" in result["by_symbol"]
+    assert result["by_symbol"]["BTCUSDT"]["position_drift"] == 2
+    assert result["by_symbol"]["ETHUSDT"]["reconcile.force_idle"] == 1
+
+
+def test_reconcile_activity_drops_events_outside_window(repo: Path) -> None:
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(hours=3)
+    ts_old = old.strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+    log = repo / "logs" / "bot.log"
+    log.write_text(
+        f"{ts_old} [warning  ] position_drift symbol=BTCUSDT local=0 exchange=10\n",
+        encoding="utf-8",
+    )
+    service = DashboardService(repo)
+    result = service.reconcile_activity(window_minutes=60)
+    assert result["events"]["position_drift"] == 0
+
+
+def test_slip_stats_includes_maker_pct(repo: Path) -> None:
+    log = repo / "logs" / "bot.log"
+    log.write_text(
+        "\n".join([
+            "2026-05-25T10:00:00.000000Z [info     ] bybit.fill.slip_bps bps=0.0 expected=1.35 fill=1.35 is_maker=True link_id=foo side=Buy symbol=BTCUSDT",
+            "2026-05-25T10:00:01.000000Z [info     ] bybit.fill.slip_bps bps=1.5 expected=1.35 fill=1.3502 is_maker=True link_id=bar side=Sell symbol=BTCUSDT",
+            "2026-05-25T10:00:02.000000Z [info     ] bybit.fill.slip_bps bps=3.0 expected=1.35 fill=1.3504 is_maker=False link_id=baz side=Buy symbol=BTCUSDT",
+            "2026-05-25T10:00:03.000000Z [info     ] bybit.fill.slip_bps bps=-1.0 expected=1.35 fill=1.3499 is_maker=True link_id=qux side=Sell symbol=ETHUSDT",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    service = DashboardService(repo)
+    result = service.slip_stats(window_size=200)
+    # 3 of 4 fills were maker → 75%.
+    assert result["all"]["count"] == 4
+    assert result["all"]["maker_count"] == 3
+    assert result["all"]["maker_pct"] == 75.0
+    # 2 of 4 fills were adverse (positive bps) → 50%.
+    assert result["all"]["adverse_pct"] == 50.0
+    # BTCUSDT: 2/3 maker.
+    btc = result["by_symbol"]["BTCUSDT"]
+    assert btc["count"] == 3
+    assert btc["maker_count"] == 2
+    assert btc["maker_pct"] == round(100 * 2 / 3, 1)
 
 
 def test_backtest_rejects_unsupported_signal(repo: Path) -> None:

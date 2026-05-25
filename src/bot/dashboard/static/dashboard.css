@@ -614,12 +614,12 @@ table.data.compact th, table.data.compact td { padding: 8px 10px; }
   line-height: 1.4;
 }
 
-.pill.severity-ok, .pill.status-finished {
+.pill.severity-ok, .pill.status-finished, .pill.pos {
   background: hsl(var(--success) / 0.12);
   color: hsl(var(--success));
   border-color: hsl(var(--success) / 0.25);
 }
-.pill.severity-warn, .pill.status-running {
+.pill.severity-warn, .pill.status-running, .pill.warn {
   background: hsl(var(--warning) / 0.12);
   color: hsl(var(--warning));
   border-color: hsl(var(--warning) / 0.25);
@@ -949,6 +949,70 @@ label {
   flex-wrap: wrap;
   align-items: end;
   margin-bottom: 14px;
+}
+
+.recon-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 18px;
+  row-gap: 4px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.recon-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.recon-chip code {
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+.recon-chip strong {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.recon-chip.pos strong { color: hsl(var(--muted-foreground)); }
+.recon-chip.warn strong { color: hsl(var(--warning)); }
+.recon-chip.neg strong { color: hsl(var(--destructive)); }
+
+.recon-by-symbol { margin-top: 12px; }
+.recon-by-symbol > summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+}
+.recon-by-symbol > summary:hover { color: hsl(var(--foreground)); }
+
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 14px;
+}
+.pagination .page-indicator {
+  padding: 4px 10px;
+  border-radius: calc(var(--radius) - 2px);
+  background: hsl(var(--muted) / 0.6);
+  color: hsl(var(--muted-foreground));
+  font-variant-numeric: tabular-nums;
+}
+.pagination .disabled {
+  opacity: 0.4;
+  pointer-events: none;
+  padding: 4px 10px;
+}
+.pagination .page-jump {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.pagination .page-jump input[type="number"] {
+  width: 70px;
 }
 
 /* ----- Charts ----- */

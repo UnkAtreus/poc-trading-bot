@@ -18,6 +18,7 @@ from bot.config import load_settings
 from bot.monitoring.ai_context import (
     CRITICAL_EVENTS,
     IMPORTANT_EVENTS,
+    _literal_dict,
     iter_ai_events,
     latest_log,
 )
@@ -373,6 +374,62 @@ class DashboardService:
             })
         return rows[-max(1, min(limit, 500)):]
 
+    def log_events_page(
+        self,
+        *,
+        event: str = "",
+        symbol: str = "",
+        page: int = 1,
+        per_page: int = 120,
+    ) -> dict[str, Any]:
+        """Paginated event view for the Raw Events page.
+
+        Returns events newest-first sliced to one page. ``per_page`` is clamped
+        to [10, 500]. ``page`` snaps to ``total_pages`` if it overshoots.
+        """
+        per_page = max(10, min(per_page, 500))
+        page = max(1, page)
+        try:
+            source = latest_log(self.logs_dir, "*.log")
+        except FileNotFoundError:
+            return {
+                "events": [],
+                "total": 0,
+                "page": 1,
+                "per_page": per_page,
+                "total_pages": 0,
+            }
+        rows: list[dict[str, Any]] = []
+        for ev in iter_ai_events(source):
+            if event and ev.event != event:
+                continue
+            if symbol and ev.symbol != symbol:
+                continue
+            rows.append({
+                "ts": ev.ts,
+                "level": ev.level,
+                "event": ev.event,
+                "symbol": ev.symbol or "",
+                "fields": ev.fields,
+                "critical": ev.is_critical,
+            })
+        total = len(rows)
+        total_pages = (total + per_page - 1) // per_page if total else 0
+        if total_pages:
+            page = min(page, total_pages)
+        else:
+            page = 1
+        rows.reverse()  # newest first
+        start = (page - 1) * per_page
+        end = start + per_page
+        return {
+            "events": rows[start:end],
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+        }
+
     def latency_stats(self, *, window_size: int = 100) -> dict[str, Any]:
         """Aggregate bybit.rest.latency + bybit.ws.event_age events into rolling percentiles.
 
@@ -450,6 +507,9 @@ class DashboardService:
         Slip sign convention (from bybit_live._record_slip):
           - positive bps = adverse (paid more on buy, got less on sell)
           - negative bps = price improvement
+
+        Each sample carries the is_maker flag so this aggregator also returns
+        maker_pct alongside adverse_pct — the bot targets >=90% maker fills.
         """
         from collections import deque
 
@@ -459,9 +519,9 @@ class DashboardService:
             return {"source_log": None, "by_side": {}, "by_symbol": {}, "all": {}, "updated_at": None}
 
         window_size = max(10, min(window_size, 2000))
-        by_side: dict[str, deque[float]] = {}
-        by_symbol: dict[str, deque[float]] = {}
-        all_samples: deque[float] = deque(maxlen=window_size)
+        by_side: dict[str, deque[tuple[float, bool]]] = {}
+        by_symbol: dict[str, deque[tuple[float, bool]]] = {}
+        all_samples: deque[tuple[float, bool]] = deque(maxlen=window_size)
         last_ts: str | None = None
         recent: deque[dict[str, Any]] = deque(maxlen=20)
 
@@ -474,9 +534,11 @@ class DashboardService:
                 continue
             side = (ev.fields.get("side") or "?").strip()
             sym = (ev.fields.get("symbol") or "?").strip()
-            by_side.setdefault(side, deque(maxlen=window_size)).append(bps)
-            by_symbol.setdefault(sym, deque(maxlen=window_size)).append(bps)
-            all_samples.append(bps)
+            is_maker = str(ev.fields.get("is_maker", "")).strip().lower() == "true"
+            sample = (bps, is_maker)
+            by_side.setdefault(side, deque(maxlen=window_size)).append(sample)
+            by_symbol.setdefault(sym, deque(maxlen=window_size)).append(sample)
+            all_samples.append(sample)
             last_ts = ev.ts
             recent.append({
                 "ts": ev.ts,
@@ -485,12 +547,14 @@ class DashboardService:
                 "expected": ev.fields.get("expected"),
                 "fill": ev.fields.get("fill"),
                 "bps": round(bps, 3),
+                "is_maker": is_maker,
             })
 
-        def _stats(samples: list[float]) -> dict[str, float | int]:
+        def _stats(samples: list[tuple[float, bool]]) -> dict[str, float | int]:
             if not samples:
                 return {"count": 0}
-            arr = sorted(samples)
+            bps_vals = [s[0] for s in samples]
+            arr = sorted(bps_vals)
             n = len(arr)
             def pct(p: float) -> float:
                 if n == 1:
@@ -498,6 +562,7 @@ class DashboardService:
                 k = max(0, min(n - 1, int(round(p * (n - 1)))))
                 return arr[k]
             adverse = [v for v in arr if v > 0]
+            maker_count = sum(1 for _, m in samples if m)
             return {
                 "count": n,
                 "min": round(arr[0], 3),
@@ -507,6 +572,8 @@ class DashboardService:
                 "max": round(arr[-1], 3),
                 "mean": round(sum(arr) / n, 3),
                 "adverse_pct": round(100 * len(adverse) / n, 1),
+                "maker_count": maker_count,
+                "maker_pct": round(100 * maker_count / n, 1),
             }
 
         return {
@@ -518,6 +585,138 @@ class DashboardService:
             "last_ts": last_ts,
             "recent": list(recent),
             "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def ws_health(self) -> dict[str, Any]:
+        """Surface most-recent WS connection health from heartbeat log lines.
+
+        Each ``heartbeat`` event embeds a ``ws`` field (string-repr dict) with
+        public + private stream status, last_msg_age, and subscriptions. We
+        also count ``public_ws_subscribed`` / ``private_ws_subscribed`` events
+        as proxies for reconnect count (initial connect + each reconnect logs
+        these events).
+        """
+        from datetime import datetime as _dt, timezone as _tz
+
+        try:
+            source = latest_log(self.logs_dir, "*.log")
+        except FileNotFoundError:
+            return {
+                "source_log": None,
+                "public": None,
+                "private": None,
+                "subscribe_counts": {"public": 0, "private": 0},
+                "last_heartbeat_ts": None,
+                "heartbeat_age_seconds": None,
+                "updated_at": None,
+            }
+
+        last_ws_raw: str | None = None
+        last_hb_ts: str | None = None
+        pub_subs = 0
+        priv_subs = 0
+        for ev in iter_ai_events(source):
+            if ev.event == "heartbeat":
+                last_hb_ts = ev.ts
+                ws_raw = ev.fields.get("ws")
+                if ws_raw:
+                    last_ws_raw = ws_raw
+            elif ev.event == "public_ws_subscribed":
+                pub_subs += 1
+            elif ev.event == "private_ws_subscribed":
+                priv_subs += 1
+
+        ws_dict: dict[str, Any] | None = _literal_dict(last_ws_raw) if last_ws_raw else None
+        public: dict[str, Any] | None = None
+        private: dict[str, Any] | None = None
+        if isinstance(ws_dict, dict):
+            pub = ws_dict.get("public") if isinstance(ws_dict.get("public"), dict) else None
+            prv = ws_dict.get("private") if isinstance(ws_dict.get("private"), dict) else None
+            if pub:
+                public = {
+                    "status": pub.get("status"),
+                    "last_msg_age_seconds": pub.get("last_msg_age_seconds"),
+                    "subscribed_symbols": pub.get("subscribed_symbols") or [],
+                }
+            if prv:
+                private = {
+                    "status": prv.get("status"),
+                    "last_msg_age_seconds": prv.get("last_msg_age_seconds"),
+                    "subscribed": bool(prv.get("subscribed")),
+                }
+
+        hb_age = _seconds_since(_parse_ts_seconds(last_hb_ts)) if last_hb_ts else None
+
+        return {
+            "source_log": str(source.relative_to(self.root)) if source.is_absolute() else str(source),
+            "public": public,
+            "private": private,
+            "subscribe_counts": {"public": pub_subs, "private": priv_subs},
+            "last_heartbeat_ts": last_hb_ts,
+            "heartbeat_age_seconds": hb_age,
+            "updated_at": _dt.now(_tz.utc).isoformat(),
+        }
+
+    def reconcile_activity(self, *, window_minutes: int = 60) -> dict[str, Any]:
+        """Rolling counts of reconcile / drift events in the last N minutes.
+
+        Surfaces whether the bot's exchange-state-sync paths are firing too
+        often (Fix #1 should drop adopt/force_idle/exec_skipped to near zero
+        in normal operation).
+        """
+        from datetime import datetime as _dt, timezone as _tz
+
+        tracked = [
+            "position_drift",
+            "reconcile.size_drift",
+            "reconcile.adopt_exchange_position",
+            "reconcile.force_idle",
+            "reconcile.failed",
+            "execution_skipped_pre_adopt",
+            "cancel_failed",
+        ]
+        try:
+            source = latest_log(self.logs_dir, "*.log")
+        except FileNotFoundError:
+            return {
+                "source_log": None,
+                "window_minutes": window_minutes,
+                "events": {name: 0 for name in tracked},
+                "by_symbol": {},
+                "first_ts": None,
+                "last_ts": None,
+                "updated_at": None,
+            }
+
+        window_minutes = max(5, min(window_minutes, 1440))
+        cutoff = _dt.now(_tz.utc).timestamp() - window_minutes * 60
+        tracked_set = set(tracked)
+        counts: dict[str, int] = {name: 0 for name in tracked}
+        by_symbol: dict[str, dict[str, int]] = {}
+        first_ts: str | None = None
+        last_ts: str | None = None
+
+        for ev in iter_ai_events(source):
+            if ev.event not in tracked_set:
+                continue
+            ts_seconds = _parse_ts_seconds(ev.ts)
+            if ts_seconds is not None and ts_seconds < cutoff:
+                continue
+            counts[ev.event] += 1
+            first_ts = first_ts or ev.ts
+            last_ts = ev.ts
+            sym = ev.symbol or "(none)"
+            row = by_symbol.setdefault(sym, {name: 0 for name in tracked})
+            row[ev.event] += 1
+
+        return {
+            "source_log": str(source.relative_to(self.root)) if source.is_absolute() else str(source),
+            "window_minutes": window_minutes,
+            "events": counts,
+            "by_symbol": dict(sorted(by_symbol.items())),
+            "first_ts": first_ts,
+            "last_ts": last_ts,
+            "updated_at": _dt.now(_tz.utc).isoformat(),
         }
 
     def backtest_analysis(

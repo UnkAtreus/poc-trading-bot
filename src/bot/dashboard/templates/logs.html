@@ -1,20 +1,45 @@
 {% extends "base.html" %}
 {% block content %}
+{% set r = result or {} %}
+{% set events = r.events or [] %}
+{% set total = r.total or 0 %}
+{% set cur_page = r.page or 1 %}
+{% set per_page = r.per_page or 120 %}
+{% set total_pages = r.total_pages or 0 %}
+{% set qs_base = '?event=' ~ (event or '') ~ '&symbol=' ~ (symbol or '') ~ '&per_page=' ~ per_page %}
 <section class="card">
   <h2>Filtered log events</h2>
   <form class="filter-form" method="get" action="/logs">
     <label>Event<input type="text" name="event" value="{{ event }}" placeholder="e.g. heartbeat"></label>
     <label>Symbol<input type="text" name="symbol" value="{{ symbol }}" placeholder="e.g. BTCUSDT"></label>
+    <label>Per page
+      <select name="per_page">
+        {% for pp in [50, 120, 250, 500] %}
+          <option value="{{ pp }}" {{ 'selected' if pp == per_page else '' }}>{{ pp }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <button type="submit">Apply</button>
     <a href="/logs" class="ghost">Reset</a>
   </form>
-  <p class="subtle">Showing latest {{ events|length }} matching events (max 120).</p>
+
+  {% if total %}
+    {% set start_idx = (cur_page - 1) * per_page + 1 %}
+    {% set end_idx = start_idx + (events|length) - 1 %}
+    <p class="subtle">
+      Showing {{ start_idx }}–{{ end_idx }} of {{ total }} matching events
+      (page {{ cur_page }} of {{ total_pages }}, newest first).
+    </p>
+  {% else %}
+    <p class="subtle">0 matching events.</p>
+  {% endif %}
+
   {% if events %}
     <div class="table-scroll">
     <table class="data">
       <thead><tr><th>Timestamp</th><th>Level</th><th>Event</th><th>Symbol</th><th>Fields</th></tr></thead>
       <tbody>
-        {% for ev in events|reverse %}
+        {% for ev in events %}
         <tr class="{{ 'critical-row' if ev.critical else '' }}">
           <td>{{ ev.ts|bangkok_dt }}</td>
           <td><span class="pill level-{{ ev.level|lower }}">{{ ev.level }}</span></td>
@@ -26,6 +51,38 @@
       </tbody>
     </table>
     </div>
+
+    {% if total_pages > 1 %}
+      <nav class="pagination" aria-label="Log pagination">
+        {% if cur_page > 1 %}
+          <a class="ghost" href="{{ qs_base }}&page=1">« First</a>
+          <a class="ghost" href="{{ qs_base }}&page={{ cur_page - 1 }}">‹ Prev</a>
+        {% else %}
+          <span class="ghost disabled">« First</span>
+          <span class="ghost disabled">‹ Prev</span>
+        {% endif %}
+
+        <span class="page-indicator">Page {{ cur_page }} / {{ total_pages }}</span>
+
+        {% if cur_page < total_pages %}
+          <a class="ghost" href="{{ qs_base }}&page={{ cur_page + 1 }}">Next ›</a>
+          <a class="ghost" href="{{ qs_base }}&page={{ total_pages }}">Last »</a>
+        {% else %}
+          <span class="ghost disabled">Next ›</span>
+          <span class="ghost disabled">Last »</span>
+        {% endif %}
+
+        <form method="get" action="/logs" class="page-jump">
+          <input type="hidden" name="event" value="{{ event }}">
+          <input type="hidden" name="symbol" value="{{ symbol }}">
+          <input type="hidden" name="per_page" value="{{ per_page }}">
+          <label>Jump to
+            <input type="number" name="page" min="1" max="{{ total_pages }}" value="{{ cur_page }}">
+          </label>
+          <button type="submit">Go</button>
+        </form>
+      </nav>
+    {% endif %}
   {% else %}
     <p class="subtle">No events match the filter.</p>
   {% endif %}

@@ -15,7 +15,19 @@ LINE_RE = re.compile(
     r"^(?P<ts>\S+)\s+\[\s*(?P<level>[A-Za-z]+)\s+\]\s+"
     r"(?P<event>[A-Za-z0-9_.-]+)\s*(?P<kv>.*)$"
 )
-KV_RE = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>\{.*?\}|'[^']*'|\"[^\"]*\"|\S+)")
+# Value form supports one level of brace nesting so heartbeat ``ws={...}`` (an
+# outer dict whose values are inner dicts) parses as a single field. ``re``
+# can't do arbitrary recursion; one level of nesting covers every real
+# log line we emit. Lines deeper than that fall back to the ``\S+`` arm.
+KV_RE = re.compile(
+    r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)="
+    r"(?P<value>"
+    r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}"
+    r"|'[^']*'"
+    r"|\"[^\"]*\""
+    r"|\S+"
+    r")"
+)
 
 CRITICAL_EVENTS = {
     "fatal_order_rejection_stopping_bot",
@@ -245,7 +257,11 @@ def _parse_fields(text: str) -> dict[str, str]:
     fields: dict[str, str] = {}
     for match in KV_RE.finditer(text):
         value = match.group("value").strip()
-        if len(value) > MAX_FIELD_CHARS:
+        # Truncation is a token-budget guard for AI context. Braced values
+        # are usually structured (dicts/lists) that downstream consumers
+        # parse with ast.literal_eval; truncating them breaks the parse, so
+        # keep them whole.
+        if len(value) > MAX_FIELD_CHARS and not value.startswith("{"):
             value = value[:MAX_FIELD_CHARS] + "..."
         fields[match.group("key")] = value
     return fields

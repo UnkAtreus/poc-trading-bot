@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="card" data-ws-health-widget>
+  <div class="card-head">
+    <h2>WebSocket health</h2>
+    <p class="subtle">
+      Public + private stream status from the latest heartbeat.
+      <span class="subtle" data-ws-health-updated></span>
+    </p>
+  </div>
+  <div class="latency-grid">
+    <div class="ws-stream" data-ws-public>
+      <h3 class="metric-label">Public stream</h3>
+      <table class="data-table compact">
+        <tbody>
+          <tr><th>Status</th><td><span class="pill" data-ws-public-status>—</span></td></tr>
+          <tr><th>Last msg age</th><td data-ws-public-age>—</td></tr>
+          <tr><th>Subscribe count</th><td data-ws-public-subs>—</td></tr>
+          <tr><th>Subscribed symbols</th><td data-ws-public-symbols>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="ws-stream" data-ws-private>
+      <h3 class="metric-label">Private stream</h3>
+      <table class="data-table compact">
+        <tbody>
+          <tr><th>Status</th><td><span class="pill" data-ws-private-status>—</span></td></tr>
+          <tr><th>Last msg age</th><td data-ws-private-age>—</td></tr>
+          <tr><th>Subscribe count</th><td data-ws-private-subs>—</td></tr>
+          <tr><th>Subscribed</th><td data-ws-private-flag>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="subtle" style="margin-top:8px">
+    Heartbeat age <span data-ws-heartbeat-age>—</span> ·
+    Source <code data-ws-source>—</code>
+  </p>
+</section>
+
+<section class="card" data-reconcile-widget>
+  <div class="card-head">
+    <h2>Reconcile activity</h2>
+    <p class="subtle">
+      Rolling counts in the last <span data-reconcile-window>60</span> minutes.
+      After Fix #1, adopt / force_idle / execution_skipped_pre_adopt should be near zero in normal operation.
+      <span class="subtle" data-reconcile-updated></span>
+    </p>
+  </div>
+  <div class="recon-chip-row" data-reconcile-totals>
+    <span class="subtle">loading…</span>
+  </div>
+  <details class="recon-by-symbol" data-reconcile-details>
+    <summary class="metric-label">By symbol <span class="subtle" data-reconcile-symbol-count></span></summary>
+    <div class="table-scroll" style="margin-top:8px">
+      <table class="data-table compact">
+        <thead data-reconcile-symbol-head>
+          <tr><th>symbol</th></tr>
+        </thead>
+        <tbody data-reconcile-by-symbol>
+          <tr><td class="subtle">loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </details>
+</section>
+
+<section class="card" data-latency-widget>
+  <div class="card-head">
+    <h2>Live latency</h2>
+    <p class="subtle">
+      REST round-trip + WS event age, last 100 samples from
+      <code data-latency-source>—</code>.
+      Mainnet-like p90 budget: REST ≤ 200 ms, WS ≤ 500 ms. Conservative: 1000 ms.
+      <span class="subtle" data-latency-updated></span>
+    </p>
+  </div>
+  <div class="latency-grid">
+    <div>
+      <h3 class="metric-label">REST round-trip (ms)</h3>
+      <table class="data-table compact">
+        <thead>
+          <tr><th>op</th><th>n</th><th>p50</th><th>p90</th><th>p99</th><th>max</th></tr>
+        </thead>
+        <tbody data-latency-rest>
+          <tr><td colspan="6" class="subtle">loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3 class="metric-label">WS event age (ms)</h3>
+      <table class="data-table compact">
+        <thead>
+          <tr><th>kind</th><th>n</th><th>p50</th><th>p90</th><th>p99</th><th>max</th></tr>
+        </thead>
+        <tbody data-latency-ws>
+          <tr><td colspan="6" class="subtle">loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="card" data-slip-widget>
+  <div class="card-head">
+    <h2>Fill slippage &amp; maker rate</h2>
+    <p class="subtle">
+      Per-fill price drift vs the limit price we placed. Positive bps = adverse, negative = price improvement.
+      Strategy targets ≥90% maker fills (PostOnly).
+      <span data-slip-summary></span>
+      <span class="subtle" data-slip-updated></span>
+    </p>
+  </div>
+  <div class="latency-grid">
+    <div>
+      <h3 class="metric-label">By side (bps)</h3>
+      <table class="data-table compact">
+        <thead>
+          <tr><th>side</th><th>n</th><th>p50</th><th>p90</th><th>p99</th><th>max</th><th>adv%</th><th>maker%</th></tr>
+        </thead>
+        <tbody data-slip-by-side>
+          <tr><td colspan="8" class="subtle">loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3 class="metric-label">By symbol (bps)</h3>
+      <table class="data-table compact">
+        <thead>
+          <tr><th>symbol</th><th>n</th><th>p50</th><th>p90</th><th>p99</th><th>max</th><th>adv%</th><th>maker%</th></tr>
+        </thead>
+        <tbody data-slip-by-symbol>
+          <tr><td colspan="8" class="subtle">loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

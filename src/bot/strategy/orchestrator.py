@@ -58,6 +58,16 @@ ORDER_LINK_RANDOM_LEN = 16
 # float-equality match — prevents spam in size-drift / position-drift logs.
 RECONCILE_NOISE_EPS = 1e-3
 
+# When a WS PositionEvent reports drift vs local SM state, defer the reconcile
+# by this many seconds. The position and execution WS streams arrive within a
+# few ms of each other for the same fill, but order is not guaranteed — when
+# position arrives first, an immediate reconcile races (and beats) the
+# follow-up execution event, causing the execution to be skipped as
+# "pre-adopt" and bypassing risk.on_trade_closed. The debounce lets the
+# matching execution event update SM state through the normal flow; the
+# reconcile only fires if drift persists (true missed event).
+RECONCILE_DEBOUNCE_SECONDS = 1.5
+
 
 def _link_factory():
     def f(symbol: str, side: Side, purpose: OrderPurpose, ts: float) -> str:
@@ -120,6 +130,13 @@ class _SymbolRuntime:
     # ExecutionEvent with timestamp <= this value is already baked into the
     # adopted position_size/bep and must be skipped to avoid double-counting.
     last_adopt_ts: float = 0.0
+    # Debounced drift reconcile (see RECONCILE_DEBOUNCE_SECONDS).
+    pending_reconcile_handle: asyncio.TimerHandle | None = None
+    pending_reconcile_snapshot_ts: float = 0.0
+    # Most recent exchange-side size from a PositionEvent. Used to decide
+    # whether a follow-up ExecutionEvent has resolved a pending drift so the
+    # debounced reconcile can be cancelled without paying the REST round-trip.
+    last_seen_exchange_size: float = 0.0
 
 
 @dataclass
@@ -158,6 +175,8 @@ class Orchestrator:
         # checks. Populated lazily via _get_instrument; survives the lifetime
         # of the orchestrator.
         self._instrument_cache: dict[str, Instrument] = {}
+        # Drift-reconcile debounce window. Module default; tests override.
+        self._reconcile_debounce_seconds: float = RECONCILE_DEBOUNCE_SECONDS
 
     async def start(self) -> None:
         await self.adapter.start()
@@ -350,15 +369,18 @@ class Orchestrator:
 
         elif isinstance(ev, PositionEvent):
             # Authoritative truth about size/BEP from the WS position stream.
-            # If it disagrees with our SM state we must have missed an
-            # ExecutionEvent (dropped WS message, reconnect gap, etc.).
-            # Trigger an immediate per-symbol reconcile so the SM adopts
-            # exchange truth in milliseconds instead of waiting up to
-            # reconcile_every_seconds (default 30s) — long enough on mainnet
-            # for the position to ride uncovered.
+            # In the happy path, position and execution events for the same
+            # fill arrive within a few ms; if position arrives first we'd
+            # otherwise race the execution and trigger a redundant adopt.
+            # Debounce: schedule a reconcile after RECONCILE_DEBOUNCE_SECONDS
+            # so the matching execution event has a chance to update SM via
+            # the normal flow. If drift persists past the debounce (true
+            # missed event), the timer fires and reconcile runs as the
+            # safety net.
             rt = self._runtimes.get(ev.symbol)
             if rt is None:
                 return
+            rt.last_seen_exchange_size = abs(ev.size)
             local = abs(rt.ctx.position_size)
             exch = abs(ev.size)
             if abs(local - exch) > RECONCILE_NOISE_EPS:
@@ -367,13 +389,63 @@ class Orchestrator:
                     local=local, exchange=exch,
                     bep_local=rt.ctx.bep, bep_exchange=ev.avg_price,
                 )
-                await self._reconcile_symbol(ev.symbol, snapshot_ts=ev.timestamp)
+                self._schedule_drift_reconcile(ev.symbol, rt, ev.timestamp)
+            else:
+                # Drift cleared (e.g. position event arrived after the
+                # matching execution event). Cancel any pending debounce.
+                self._cancel_pending_reconcile(rt)
 
     async def _apply(self, symbol: str, rt: _SymbolRuntime, decision) -> None:
         rt.ctx = decision.ctx
         for action in decision.actions:
             await self._execute(symbol, rt, action)
         self.store.save(rt.ctx)
+        # If a debounced drift-reconcile is queued and local size has caught
+        # up to the last-seen exchange size (via ExecutionEvent), cancel the
+        # timer — the normal execution flow already resolved the drift.
+        if rt.pending_reconcile_handle is not None:
+            local = abs(rt.ctx.position_size)
+            if abs(local - rt.last_seen_exchange_size) <= RECONCILE_NOISE_EPS:
+                self._cancel_pending_reconcile(rt)
+
+    def _schedule_drift_reconcile(
+        self, symbol: str, rt: _SymbolRuntime, snapshot_ts: float
+    ) -> None:
+        rt.pending_reconcile_snapshot_ts = snapshot_ts
+        if rt.pending_reconcile_handle is not None:
+            rt.pending_reconcile_handle.cancel()
+        delay = self._reconcile_debounce_seconds
+        if delay <= 0:
+            # Fire immediately on the next loop tick — keeps semantics
+            # uniform with the debounced path.
+            asyncio.create_task(self._fire_drift_reconcile(symbol))
+            rt.pending_reconcile_handle = None
+            return
+        loop = asyncio.get_running_loop()
+        rt.pending_reconcile_handle = loop.call_later(
+            delay,
+            lambda: asyncio.create_task(self._fire_drift_reconcile(symbol)),
+        )
+
+    def _cancel_pending_reconcile(self, rt: _SymbolRuntime) -> None:
+        if rt.pending_reconcile_handle is not None:
+            rt.pending_reconcile_handle.cancel()
+            rt.pending_reconcile_handle = None
+        rt.pending_reconcile_snapshot_ts = 0.0
+
+    async def _fire_drift_reconcile(self, symbol: str) -> None:
+        rt = self._runtimes.get(symbol)
+        if rt is None:
+            return
+        snapshot_ts = rt.pending_reconcile_snapshot_ts
+        rt.pending_reconcile_handle = None
+        rt.pending_reconcile_snapshot_ts = 0.0
+        # Re-check drift against the last-seen exchange size before paying
+        # the REST round-trip. If local caught up, no reconcile needed.
+        local = abs(rt.ctx.position_size)
+        if abs(local - rt.last_seen_exchange_size) <= RECONCILE_NOISE_EPS:
+            return
+        await self._reconcile_symbol(symbol, snapshot_ts=snapshot_ts)
 
     async def _get_instrument(self, symbol: str) -> Instrument | None:
         """Cached lookup of per-symbol Instrument metadata.

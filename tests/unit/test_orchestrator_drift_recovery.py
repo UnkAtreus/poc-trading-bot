@@ -6,13 +6,24 @@ When that happens, the only remaining truth signal is the exchange
 and only corrected by the periodic 30s reconcile loop — long enough on
 mainnet to leave positions uncovered.
 
+The PositionEvent-driven reconcile is **debounced** by
+``RECONCILE_DEBOUNCE_SECONDS`` so the matching ExecutionEvent for the same
+fill has a chance to update SM state via the normal flow. If drift
+persists past the debounce window, the timer fires and reconcile runs as
+the safety net. The tests below use ``orch._fire_drift_reconcile`` to
+exercise the post-debounce path without real-time sleeps.
+
 These tests lock down:
 
-1. ``PositionEvent`` drift triggers an immediate per-symbol reconcile.
-2. The reconcile adopts exchange truth into the SM context.
+1. ``PositionEvent`` drift schedules a debounced reconcile.
+2. When fired, the reconcile adopts exchange truth into the SM context.
 3. Float-noise PositionEvents do NOT trigger reconcile (no spurious churn).
 4. ExecutionEvents that predate the adoption highwater are dropped to
    avoid double-counting fills already baked into the adopted size.
+5. A follow-up ExecutionEvent that resolves drift cancels the pending
+   reconcile (the race fix for testnet/mainnet happy path).
+6. Drift that persists past the debounce window still fires reconcile
+   (safety net intact).
 """
 
 from __future__ import annotations
@@ -121,14 +132,13 @@ def _build_orch(tmp_path, adapter, ctx: Context) -> tuple[Orchestrator, _SymbolR
 
 
 @pytest.mark.asyncio
-async def test_position_event_drift_triggers_immediate_reconcile(tmp_path):
+async def test_position_event_drift_schedules_debounced_reconcile(tmp_path):
     """Reproduces the live XRP case: local=448, exchange=748.7.
 
     Bot missed several entry execution events. WS PositionEvent reports
-    real exchange size of 748.7. Before the fix, this only emitted a
-    ``position_drift`` INFO log and waited up to 30s for periodic
-    reconcile. The fix makes it call ``_reconcile_symbol`` immediately,
-    which adopts the exchange truth.
+    real exchange size of 748.7. PositionEvent schedules a debounced
+    reconcile; when the debounce fires (no follow-up ExecutionEvent
+    resolves the drift) the reconcile adopts exchange truth.
     """
     exchange_pos = Position("XRPUSDT", size=748.7, avg_price=1.3356)
     adapter = _DriftAdapter(exchange_pos)
@@ -145,7 +155,16 @@ async def test_position_event_drift_triggers_immediate_reconcile(tmp_path):
         PositionEvent(symbol="XRPUSDT", size=748.7, avg_price=1.3356, timestamp=1000.0)
     )
 
-    # _reconcile_symbol → get_position → adopt
+    # Debounced — no REST call yet, but timer scheduled.
+    assert adapter.get_position_calls == 0
+    assert rt.pending_reconcile_handle is not None
+    assert rt.pending_reconcile_snapshot_ts == 1000.0
+    assert rt.last_seen_exchange_size == 748.7
+
+    # Fire the debounced reconcile (simulates the timer expiring with no
+    # resolving ExecutionEvent in between).
+    await orch._fire_drift_reconcile("XRPUSDT")
+
     assert adapter.get_position_calls == 1
     assert rt.ctx.state is State.IN_POSITION_TP_PENDING
     assert rt.ctx.direction is Direction.LONG
@@ -163,11 +182,11 @@ async def test_position_event_drift_triggers_immediate_reconcile(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_position_event_drift_triggers_reconcile_on_missing_tp_fills(tmp_path):
+async def test_position_event_drift_reconcile_on_missing_tp_fills(tmp_path):
     """Reproduces the live ETH case: local=0.27, exchange=0.04.
 
     Bot missed several TP partial-fill execution events. WS PositionEvent
-    reports the real (smaller) exchange size.
+    reports the real (smaller) exchange size. After debounce fires, adopt.
     """
     exchange_pos = Position("XRPUSDT", size=0.04, avg_price=2068.12)
     adapter = _DriftAdapter(exchange_pos)
@@ -183,6 +202,7 @@ async def test_position_event_drift_triggers_reconcile_on_missing_tp_fills(tmp_p
     await orch._on_user_event(
         PositionEvent(symbol="XRPUSDT", size=0.04, avg_price=2068.12, timestamp=2000.0)
     )
+    await orch._fire_drift_reconcile("XRPUSDT")
 
     assert rt.ctx.position_size == 0.04
     assert rt.last_adopt_ts == 2000.0
@@ -210,6 +230,7 @@ async def test_position_event_within_noise_does_not_reconcile(tmp_path):
     )
 
     assert adapter.get_position_calls == 0
+    assert rt.pending_reconcile_handle is None
     assert rt.ctx.position_size == 68.20000000000002
     assert rt.last_adopt_ts == 0.0
 
@@ -230,10 +251,11 @@ async def test_execution_event_predating_adopt_is_skipped(tmp_path):
     )
     orch, rt = _build_orch(tmp_path, adapter, ctx)
 
-    # 1. Drift event drives the adoption, sets last_adopt_ts=1000.0.
+    # 1. Drift event drives the adoption (debounce + fire), sets last_adopt_ts.
     await orch._on_user_event(
         PositionEvent(symbol="XRPUSDT", size=748.7, avg_price=1.3356, timestamp=1000.0)
     )
+    await orch._fire_drift_reconcile("XRPUSDT")
     assert rt.ctx.position_size == 748.7
     assert rt.last_adopt_ts == 1000.0
     place_calls_after_adopt = len(adapter.place_calls)
@@ -277,6 +299,7 @@ async def test_execution_event_after_adopt_is_still_applied(tmp_path):
     await orch._on_user_event(
         PositionEvent(symbol="XRPUSDT", size=748.7, avg_price=1.3356, timestamp=1000.0)
     )
+    await orch._fire_drift_reconcile("XRPUSDT")
     assert rt.ctx.position_size == 748.7
 
     # A genuinely-new fill that arrived after adoption. Should be applied
@@ -295,3 +318,125 @@ async def test_execution_event_after_adopt_is_still_applied(tmp_path):
     )
 
     assert rt.ctx.position_size == pytest.approx(848.7)
+
+
+@pytest.mark.asyncio
+async def test_position_event_then_execution_event_cancels_debounce(tmp_path):
+    """Happy-path race fix.
+
+    Bybit publishes PositionEvent (size=10) and ExecutionEvent (qty=10) for
+    the same fill within a few ms. Position event arrives first → drift →
+    debounced reconcile scheduled. Execution event arrives → SM transitions
+    to IN_POSITION_TP_PENDING with size=10. Drift now resolved; the pending
+    reconcile must be cancelled and `get_position` REST never called.
+
+    Before this fix the reconcile would have raced ahead, adopted, and
+    then skipped the execution as ``execution_skipped_pre_adopt`` — silently
+    bypassing risk.on_trade_closed for every fill.
+    """
+    adapter = _DriftAdapter(Position("XRPUSDT", size=10.0, avg_price=1.5))
+    # Local SM in ENTRY_PENDING (just placed the buy), size still 0.
+    ctx = Context(
+        symbol="XRPUSDT",
+        state=State.ENTRY_PENDING,
+        direction=Direction.LONG,
+        position_size=0.0,
+        bep=0.0,
+        pending_entry_link_id="XRPUSDT-B-entry-ABC",
+    )
+    orch, rt = _build_orch(tmp_path, adapter, ctx)
+
+    # 1. Position WS arrives first (exchange size 10, local 0 → drift).
+    await orch._on_user_event(
+        PositionEvent(symbol="XRPUSDT", size=10.0, avg_price=1.5, timestamp=1000.0)
+    )
+    assert rt.pending_reconcile_handle is not None
+    assert adapter.get_position_calls == 0  # debounced
+
+    # 2. Matching ExecutionEvent arrives a few ms later. Normal SM flow
+    #    updates position_size = 10. Drift now resolved.
+    await orch._on_user_event(
+        ExecutionEvent(
+            link_id="XRPUSDT-B-entry-ABC",
+            symbol="XRPUSDT",
+            side=Side.BUY,
+            qty=10.0,
+            price=1.5,
+            timestamp=999.99,
+            fee=0.0,
+            is_maker=True,
+        )
+    )
+
+    # Pending reconcile cancelled — no adopt path.
+    assert rt.pending_reconcile_handle is None
+    assert adapter.get_position_calls == 0
+    assert adapter.cancel_all_calls == []
+    # SM advanced to IN_POSITION_TP_PENDING with the right size.
+    assert rt.ctx.state is State.IN_POSITION_TP_PENDING
+    assert rt.ctx.position_size == 10.0
+    # Adoption highwater untouched, so subsequent executions still flow
+    # through the normal path.
+    assert rt.last_adopt_ts == 0.0
+
+
+@pytest.mark.asyncio
+async def test_position_event_drift_with_no_matching_execution_still_fires(tmp_path):
+    """Safety-net case: position WS reports drift, NO matching execution
+    arrives before the debounce expires. Reconcile must still fire to
+    adopt exchange truth — same as the legacy behavior, just deferred.
+    """
+    adapter = _DriftAdapter(Position("XRPUSDT", size=100.0, avg_price=2.0))
+    ctx = Context(
+        symbol="XRPUSDT",
+        state=State.IN_POSITION_TP_PENDING,
+        direction=Direction.LONG,
+        position_size=50.0,
+        bep=2.0,
+    )
+    orch, rt = _build_orch(tmp_path, adapter, ctx)
+
+    await orch._on_user_event(
+        PositionEvent(symbol="XRPUSDT", size=100.0, avg_price=2.0, timestamp=5000.0)
+    )
+    assert rt.pending_reconcile_handle is not None
+
+    # No follow-up execution → debounce fires → reconcile adopts.
+    await orch._fire_drift_reconcile("XRPUSDT")
+
+    assert adapter.get_position_calls == 1
+    assert rt.ctx.position_size == 100.0
+    assert rt.last_adopt_ts == 5000.0
+
+
+@pytest.mark.asyncio
+async def test_position_event_no_drift_cancels_pending_reconcile(tmp_path):
+    """If a follow-up PositionEvent shows the drift cleared (e.g. exchange
+    confirms the position matches local SM after a brief mismatch), the
+    pending reconcile must be cancelled.
+    """
+    adapter = _DriftAdapter(Position("XRPUSDT", size=10.0, avg_price=1.5))
+    ctx = Context(
+        symbol="XRPUSDT",
+        state=State.IN_POSITION_TP_PENDING,
+        direction=Direction.LONG,
+        position_size=10.0,
+        bep=1.5,
+    )
+    orch, rt = _build_orch(tmp_path, adapter, ctx)
+
+    # First event reports drift (size diff).
+    await orch._on_user_event(
+        PositionEvent(symbol="XRPUSDT", size=12.0, avg_price=1.5, timestamp=1000.0)
+    )
+    assert rt.pending_reconcile_handle is not None
+
+    # Then SM catches up by some external path → local matches exchange.
+    # A fresh position event with matching size arrives.
+    rt.ctx = rt.ctx.with_(position_size=12.0)
+    await orch._on_user_event(
+        PositionEvent(symbol="XRPUSDT", size=12.0, avg_price=1.5, timestamp=1001.0)
+    )
+
+    assert rt.pending_reconcile_handle is None
+    assert adapter.get_position_calls == 0
