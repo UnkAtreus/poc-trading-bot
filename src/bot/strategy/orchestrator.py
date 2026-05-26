@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Callable
 
 import ulid
@@ -86,6 +87,26 @@ def _is_fatal_order_rejection(reason: str | None) -> bool:
 def _tp_price(fill: float, direction: Direction, bps: float) -> float:
     delta = fill * (bps / 10_000.0)
     return fill + delta if direction is Direction.LONG else fill - delta
+
+
+def _snap_qty_to_step(qty: float, qty_step: Decimal) -> float:
+    """Snap qty to the nearest qty_step (round half to even).
+
+    Strategy maintains position_size as a running float across many
+    add/subtract ops; IEEE-754 drift means a remaining qty that is
+    mathematically ``N * qty_step`` ends up stored as
+    ``N * qty_step ± O(1e-15)``. The pre-flight min-qty check and the
+    exchange-side flooring then reject that as dust even though the real
+    position is exactly N steps. Snapping at the order boundary collapses
+    the drift to the correct step; values genuinely between steps round to
+    the closer one (which doesn't occur in normal operation since fills
+    are quantized exchange-side).
+    """
+    if qty_step is None or qty_step <= 0:
+        return qty
+    qty_dec = Decimal(str(qty))
+    steps = (qty_dec / qty_step).to_integral_value(rounding=ROUND_HALF_EVEN)
+    return float(steps * qty_step)
 
 
 def _purpose_from_link_id(symbol: str, link_id: str) -> OrderPurpose | None:
@@ -466,6 +487,18 @@ class Orchestrator:
         self._instrument_cache[symbol] = inst
         return inst
 
+    async def _snap_qty(self, symbol: str, qty: float) -> float:
+        """Snap qty to the instrument's qty_step. See ``_snap_qty_to_step``.
+
+        Returns the input unchanged when the instrument lookup fails so
+        callers don't have to special-case missing metadata; the downstream
+        adapter still performs its own quantization.
+        """
+        inst = await self._get_instrument(symbol)
+        if inst is None:
+            return qty
+        return _snap_qty_to_step(qty, inst.qty_step)
+
     async def _check_min_qty(
         self, symbol: str, qty: float, price: float
     ) -> str | None:
@@ -481,6 +514,10 @@ class Orchestrator:
         ``orderQty will be truncated to zero`` / ``110017`` log noise and,
         more importantly, lets us tag the rejection at action-emission time
         instead of after the network call.
+
+        ``qty`` is expected to already be snapped to the instrument's
+        ``qty_step`` (see ``_snap_qty``) so IEEE-754 drift around a step
+        boundary does not falsely trip the min-qty filter.
         """
         inst = await self._get_instrument(symbol)
         if inst is None:
@@ -495,20 +532,21 @@ class Orchestrator:
 
     async def _execute(self, symbol: str, rt: _SymbolRuntime, action: Action) -> None:
         if isinstance(action, PlaceEntry):
-            notional = action.qty * action.price
+            qty = await self._snap_qty(symbol, action.qty)
+            notional = qty * action.price
             ok, reason = self.risk.check_can_place_entry(symbol, notional)
             if not ok:
                 log.info("entry_blocked", symbol=symbol, reason=reason)
                 await self._handle_entry_rejected(symbol, rt, action.link_id, reason)
                 return
-            dust_reason = await self._check_min_qty(symbol, action.qty, action.price)
+            dust_reason = await self._check_min_qty(symbol, qty, action.price)
             if dust_reason is not None:
                 log.info("entry_below_min", symbol=symbol, link_id=action.link_id,
                          reason=dust_reason)
                 await self._handle_entry_rejected(symbol, rt, action.link_id, dust_reason)
                 return
             ack = await self.adapter.place_limit(symbol, action.direction.entry_side,
-                                                 action.qty, action.price, action.link_id)
+                                                 qty, action.price, action.link_id)
             if ack.accepted:
                 self.risk.on_entry_placed(symbol, notional)
                 rt.pending_entry_notional[action.link_id] = notional
@@ -518,7 +556,8 @@ class Orchestrator:
                     self._halt_for_fatal_order_error(symbol, action.link_id, ack.reason)
 
         elif isinstance(action, PlaceTP):
-            dust_reason = await self._check_min_qty(symbol, action.qty, action.price)
+            qty = await self._snap_qty(symbol, action.qty)
+            dust_reason = await self._check_min_qty(symbol, qty, action.price)
             if dust_reason is not None:
                 log.warning("tp_place_skipped_below_min", symbol=symbol,
                             link_id=action.link_id, reason=dust_reason)
@@ -526,7 +565,7 @@ class Orchestrator:
                                                 OrderPurpose.TP, dust_reason)
                 return
             ack = await self.adapter.place_limit(symbol, action.direction.tp_side,
-                                                 action.qty, action.price, action.link_id,
+                                                 qty, action.price, action.link_id,
                                                  reduce_only=True, post_only=False)
             if not ack.accepted:
                 log.warning("tp_place_rejected", symbol=symbol, link_id=action.link_id,
@@ -538,7 +577,8 @@ class Orchestrator:
                                                     OrderPurpose.TP, ack.reason)
 
         elif isinstance(action, PlaceMergeTP):
-            dust_reason = await self._check_min_qty(symbol, action.qty, action.price)
+            qty = await self._snap_qty(symbol, action.qty)
+            dust_reason = await self._check_min_qty(symbol, qty, action.price)
             if dust_reason is not None:
                 log.warning("merge_tp_place_skipped_below_min", symbol=symbol,
                             link_id=action.link_id, reason=dust_reason)
@@ -546,7 +586,7 @@ class Orchestrator:
                                                 OrderPurpose.MERGE, dust_reason)
                 return
             ack = await self.adapter.place_limit(symbol, action.direction.tp_side,
-                                                 action.qty, action.price, action.link_id,
+                                                 qty, action.price, action.link_id,
                                                  reduce_only=True, post_only=False)
             if not ack.accepted:
                 log.warning("merge_tp_place_rejected", symbol=symbol, link_id=action.link_id,

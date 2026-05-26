@@ -253,6 +253,111 @@ async def test_place_entry_below_min_resets_to_idle(tmp_path):
     assert rt.ctx.pending_entry_link_id is None
 
 
+def test_snap_qty_to_step_collapses_float_drift():
+    """Position size drifts ULPs across many add/subtract ops; the value
+    that should be exactly 0.1 ends up stored as 0.0999999999999659.
+    The snap helper must round it back to 0.1 so the dust check passes.
+    """
+    from bot.strategy.orchestrator import _snap_qty_to_step
+
+    qty_step = Decimal("0.1")
+    # Real value pulled from a live dust_stranded log line.
+    drifted = 0.0999999999999659
+    assert _snap_qty_to_step(drifted, qty_step) == 0.1
+
+    # 0.01-step symbols (e.g. ETHUSDT).
+    assert _snap_qty_to_step(0.009999999999999953, Decimal("0.01")) == 0.01
+
+    # Already-aligned values pass through unchanged.
+    assert _snap_qty_to_step(0.3, Decimal("0.1")) == 0.3
+
+    # Genuinely sub-step qty rounds to nearest. 0.04 → 0 (banker's rounding
+    # near 0.5 doesn't trip here because 0.4 step-fractions round down).
+    assert _snap_qty_to_step(0.04, Decimal("0.1")) == 0.0
+
+    # qty_step missing/zero: pass through.
+    assert _snap_qty_to_step(0.5, Decimal("0")) == 0.5
+
+
+@pytest.mark.asyncio
+async def test_place_tp_with_float_drift_qty_passes_after_snap(tmp_path):
+    """The dust_stranded smoking gun: SM emits qty=0.0999999999999659
+    (drifted from a true 0.1) and min_qty=0.1. Pre-snap, the dust check
+    rejected. After snap, the qty is 0.1 and the TP places successfully.
+    """
+    adapter = _InstrumentAdapter(_xrp_instrument(min_qty="0.1", min_notional="0.1"))
+    ctx = Context(
+        symbol="XRPUSDT",
+        state=State.IN_POSITION_TP_PENDING,
+        direction=Direction.LONG,
+        position_size=0.0999999999999659,
+        bep=1.5,
+        first_fill_ts=1.0,
+    )
+    orch, rt = _build_orch(tmp_path, adapter, ctx)
+
+    await orch._execute(
+        "XRPUSDT",
+        rt,
+        PlaceTP(Direction.LONG, price=1.5113, qty=0.0999999999999659, link_id="TP-1"),
+    )
+
+    # No dust rejection — adapter got the call with snapped qty.
+    assert len(adapter.place_calls) == 1
+    _, _side, qty, _price, _link_id, _kwargs = adapter.place_calls[0]
+    assert qty == 0.1
+    assert rt.ctx.state is State.IN_POSITION_TP_PENDING
+
+
+@pytest.mark.asyncio
+async def test_place_merge_tp_with_float_drift_qty_passes_after_snap(tmp_path):
+    """Same drift fix applies to PlaceMergeTP."""
+    adapter = _InstrumentAdapter(_xrp_instrument(min_qty="0.1", min_notional="0.1"))
+    ctx = Context(
+        symbol="XRPUSDT",
+        state=State.MERGE_PENDING,
+        direction=Direction.LONG,
+        position_size=0.0999999999999659,
+        bep=1.5,
+        first_fill_ts=1.0,
+    )
+    orch, rt = _build_orch(tmp_path, adapter, ctx)
+
+    await orch._execute(
+        "XRPUSDT",
+        rt,
+        PlaceMergeTP(Direction.LONG, price=1.51, qty=0.0999999999999659, link_id="MERGE-1"),
+    )
+
+    assert len(adapter.place_calls) == 1
+    _, _side, qty, _price, _link_id, _kwargs = adapter.place_calls[0]
+    assert qty == 0.1
+    assert rt.ctx.state is State.MERGE_PENDING
+
+
+@pytest.mark.asyncio
+async def test_place_entry_with_float_drift_qty_passes_after_snap(tmp_path):
+    """PlaceEntry must snap before the entry-min check as well."""
+    adapter = _InstrumentAdapter(_xrp_instrument(min_qty="0.1", min_notional="0.1"))
+    ctx = Context(
+        symbol="XRPUSDT",
+        state=State.ENTRY_PENDING,
+        direction=Direction.LONG,
+        pending_entry_link_id="E-1",
+    )
+    orch, rt = _build_orch(tmp_path, adapter, ctx)
+
+    await orch._execute(
+        "XRPUSDT",
+        rt,
+        PlaceEntry(Direction.LONG, price=1.5, qty=0.0999999999999659, link_id="E-1"),
+    )
+
+    assert len(adapter.place_calls) == 1
+    _, _side, qty, _price, _link_id, _kwargs = adapter.place_calls[0]
+    assert qty == 0.1
+
+
 @pytest.mark.asyncio
 async def test_instrument_lookup_failure_falls_back_to_adapter(tmp_path):
     """If get_instrument blows up, the pre-check returns None and we let the
